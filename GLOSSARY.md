@@ -14,7 +14,10 @@ The optional infrastructure that persists workflow progress and coordinates work
 A long-running operation that progresses in response to commands, events, timers, and activity outcomes.
 
 **State machine**:
-A deterministic model of states and allowed transitions, independent of workflow execution and persistence.
+A deterministic model of application-visible states and permitted event/guard-driven transitions. It excludes execution statuses such as retrying or notifying.
+
+**Transition execution**:
+The persisted processing of one accepted request to move an entity from its committed state to a selected target state, including work attempts and notification handoff.
 
 **Activity**:
 An application-defined operation that a workflow invokes to perform work outside its deterministic state machine. An activity may be retried.
