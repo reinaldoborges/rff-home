@@ -51,16 +51,16 @@ The custody and lifecycle of cryptographic keys, separate from the cryptographic
 A task-sharing boundary with its own membership, owner, and tasks.
 
 **Membership**:
-The relationship between a user and a group, including that user's role in the group.
+The relationship between a user and a group, including its lifecycle and role. An invited membership grants no group access until accepted.
 
 **Group owner**:
 The sole owner of a group, who is also a member and manages the group's membership.
 
 **Group member**:
-A user with membership in a group and permission to manage that group's tasks.
+A user with an active membership in a group and permission to manage that group's tasks.
 
 **Task**:
 A unit of work belonging to one group, optionally assigned to one of that group's members.
 
 **Invitation**:
-A time-bounded request from a group owner for a known user to join the group.
+The invited phase of a membership lifecycle, in which a known user has been invited to join a group but has no group access.

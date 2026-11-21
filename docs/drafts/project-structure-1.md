@@ -20,17 +20,17 @@ Working name: **RF-DSF (RF Distributed Systems Framework)**. This tree describes
   - Service Manager: single-node coordinator for the first implementation; multi-node coordination is a future design.
   - Triggers and ingress: commands, external events, and timers; HTTP, event receiver, scheduled-start, and a small development CLI are adapters. MCP is deferred.
   - Pub/Sub: in-memory wakeups only in the first implementation; polling/reconciliation recovers work after notification loss or restart.
-  - Persistence: SQLite is the first durable runtime store. Application domain persistence remains separate.
+  - Persistence: the host application injects transition persistence; SQLite may be the first adapter. Application domain persistence remains application-owned.
   - Operations: structured logs, health/readiness checks, and basic workflow/worker metrics.
   - Candidate adapters (not MVP commitments): MySQL, PostgreSQL, object storage, cache, secrets stores, cloud connectors, and dedicated brokers.
 - **Test Suite**
-  - A small multi-user task-manager domain: groups, memberships, owners, tasks, and invitations.
+  - A small multi-user task-manager domain: groups, lifecycle-based memberships (including the Invited phase), owners, and tasks.
   - Fixture and infrastructure tests for permissions, duplicate inputs, retries, expiry, restart/recovery, and failure handling.
   - Scripts and a development CLI for exercising fixture workflows.
 
 ## First implementation scope
 
-The first Go implementation is a usable single-node baseline: SQLite is authoritative for runtime execution records; the in-memory queue is a transient wakeup path; polling/reconciliation restores progress after queue loss or process restart. It includes typed state-machine and worker/activity contracts plus the task-manager fixture. Public APIs remain experimental until adopters validate them.
+The first Go implementation is a usable single-node baseline: the host application injects transition persistence (SQLite may be the first adapter); the in-memory queue is a transient wakeup path; polling/reconciliation restores progress after queue loss or process restart. It includes typed state-machine and worker/activity contracts plus the task-manager fixture. Public APIs remain experimental until adopters validate them.
 
 ## Explicitly deferred
 
