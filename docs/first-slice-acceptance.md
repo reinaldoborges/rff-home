@@ -27,6 +27,7 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 | --- | --- |
 | Identical idempotent request | Reuse of the same key and semantic request returns the existing execution and does not create duplicate work. |
 | Changed request with same key | A changed operation, machine version, event/input, or notification override is an explicit conflict. |
+| Concurrent request acceptance | Snapshot, idempotency mapping, and active-entity reservation are durably created atomically; concurrent matching requests produce one execution, and a storage failure before persistence means not accepted. |
 | Competing request | A different request while an execution is active returns busy/conflict. |
 | Competing terminal decisions | Membership decisions serialize; the first valid committed transition wins and later incompatible decisions conflict. |
 | Retry after handler failure | The selector is not rerun; the same target and pinned policy continue. `Retry` runs only after policy authorization, and retry-hook failure is recorded and handled under that policy. |
@@ -34,6 +35,7 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 | Explicit intervention | Authorized retry resumes the same execution; explicit pre-commit abort invokes recovery and leaves the old current state committed. |
 | Attempt timeout and deadline | Per-attempt timeout, overall transition deadline, and lease expiry produce distinct handling; no implicit framework retry policy is used. |
 | Lease reclaim | After worker loss and lease expiry, the same execution can be reclaimed; a stale fencing token cannot commit. |
+| Crash around domain commit | After a durable work-success marker, recovery repeats or reconciles the same idempotent host commit using its execution ID; it does not rerun successful work, and the host-side receipt prevents duplicate state application. |
 
 ## Restart and notification recovery
 
@@ -41,11 +43,14 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 | --- | --- |
 | Accepted but waiting | After process restart, the accepted execution remains discoverable and can run. |
 | Worker/process loss during attempt | The durable execution is recovered after lease expiry without selecting a new target or losing its pinned policy. |
+| Typed input rehydration | After restart, the execution rehydrates input through its pinned codec or immutable reference and preserves semantic idempotency identity. |
+| Active-record schema migration | Adapter migration preserves a pending execution, its idempotency identity, pinned machine/input version, and attempt history so it remains recoverable. |
 | Restart during expiry wait | Expiry is decided from the persisted deadline, not the timer or wakeup delivery time. |
 | Notification disabled | The execution completes after domain commit without creating a notification handoff. |
 | Notification enabled | The selected notification choice is persisted; execution completes on durable handoff, not consumer delivery. |
 | Delivery failure | Delivery retries independently and at least once; failure does not alter an Invited Membership or stop its expiry. |
 | Handoff repair | After domain commit but before durable handoff, restart recovers `NotificationRepair`; an authorized retry or durable waiver settles it without rolling back domain state. |
+| Split-store notification handoff | With transition metadata and domain state in separate stores, the persisted intent and host commit receipt are sufficient to idempotently recreate the outbox handoff after restart; completion waits for durable handoff. |
 
 ## Authorization
 
