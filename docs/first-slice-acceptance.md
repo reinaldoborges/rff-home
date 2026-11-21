@@ -16,10 +16,13 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 | Initialize an entity | The selected initial state's entry hook runs with no previous state; the chosen state becomes current only after successful work. |
 | Valid task progression | `Open → InProgress → Done` succeeds; cancellation is allowed before completion. |
 | Invalid task progression | Invalid events/guards, including cancellation after completion, are rejected without changing current state or creating side effects. |
-| Membership outcomes | Invitation can be accepted, declined, expired, or revoked; acceptance is valid only before the persisted expiry deadline. |
+| Membership outcomes | Invitation can be accepted, declined, expired, or revoked; acceptance is valid only before the persisted expiry deadline. Owner removal of an Active Membership produces the distinct terminal outcome `Removed`. |
 | Expiry boundary | At or after the persisted deadline, expiry wins even if timer delivery is late. |
 | Group closure | Pending invitations become revoked with a group-closed reason; closed-group access and further task/membership changes are denied. |
+| Removal with assigned tasks | Owner removal is rejected while a task remains assigned to the member; the membership remains Active and access is unchanged. |
+| Active membership removal | After assigned tasks are unassigned or reassigned, owner removal ends group access atomically, retains the Removed Membership and historical task references, and records the owner and time in the application-owned business audit. |
 | Terminal history | Terminal Membership records are immutable; a later invitation creates a new record. |
+| Reinvite after removal | Re-inviting a removed user creates a new Membership record; the prior Removed record remains unchanged and only one Invited or Active membership exists per group/user. |
 
 ## Requests, concurrency, and retries
 
@@ -61,7 +64,7 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 
 ## Authorization
 
-Use seeded opaque identities for the group owner, an active member, an invited user, and an identity from another group. For every settled authorization rule, include at least one allowed and one denied example, including group isolation, owner-only invitation, active-member task permissions, and assignment only to a current group member. Invited users have no group access. Ownership transfer and active-member removal are excluded until their separate lifecycle decisions are resolved.
+Use seeded opaque identities for the group owner, an active member, an invited user, and an identity from another group. For every settled authorization rule, include at least one allowed and one denied example, including group isolation, owner-only invitation and active-member removal, active-member task permissions, and assignment only to a current group member. Invited and removed users have no group access. Ownership transfer remains excluded until its separate lifecycle decision is resolved.
 
 ## Out of scope
 

@@ -1,0 +1,3 @@
+# Represent active-member removal as a terminal membership outcome
+
+Owner-initiated removal of an Active Membership is represented by a distinct terminal `Removed` outcome, rather than reusing `Revoked`, which is reserved for pending invitations. This preserves the difference between withdrawing an invitation and ending active membership, while retaining the original Membership and historical task references; a later invitation creates a new record. Removal follows task reassignment or unassignment, ends group access atomically, and records the owner and time in the application-owned business audit.
