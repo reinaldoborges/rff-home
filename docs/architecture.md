@@ -1,6 +1,6 @@
 # RF-DSF Architecture Baseline
 
-This document records the agreed design baseline for RF-DSF. It guides future implementation repositories; it is not a package layout or a complete API specification.
+This document records the agreed design baseline for RF-DSF. It guides the future implementation repository; it is not a complete API specification.
 
 ## Product shape
 
@@ -10,7 +10,7 @@ Reliability, security, auditability, operability, resilience, and disaster recov
 
 ## Logical areas
 
-These are conceptual boundaries, not decisions about repositories or Go packages.
+These are conceptual boundaries; the initial repository and package boundaries are described below.
 
 ### Framework
 
@@ -71,8 +71,18 @@ The first Go implementation should prove a single-node runtime end to end: typed
 
 The first slice excludes multi-node coordination, cloud-specific adapters, production identity-provider integrations, concrete crypto/KMS APIs, MCP, and a production control plane. Framework APIs remain experimental until validated adopters establish a stable release.
 
+## First implementation repository
+
+The first Go slice will live in `reinaldoborges/rff-go`, separate from this home repo, with one root Go module, `github.com/reinaldoborges/rff-go`. This is an experimental import path; changing it later requires consumer migration. The repository has not yet been created.
+
+- Provide public `fsm` and `runtime` packages. The FSM is usable without the runtime; the runtime uses the FSM and owns its execution and persistence contracts.
+- Put provided persistence adapters under `adapters/`. They implement runtime contracts and are selected and injected by the host. Reusable framework and runtime code must not depend on concrete adapters or the task-manager fixture.
+- Keep coordinator and worker implementation details internal where they need not be public. Keep the task-manager fixture and its adapter conformance harness internal, with a runnable local/test fixture CLI under `cmd/`. The harness is reusable across adapters included in the first slice, without committing to a public conformance API.
+- Do not create packages for deferred capabilities merely to fill out the conceptual architecture. One module can carry adapter dependency metadata even when an application does not import an adapter.
+- Split repositories or modules only when demonstrated independent ownership, dependency, or release needs justify it.
+
 ## Home repo responsibilities and deferred decisions
 
-This home repo is the source of definitions, architecture decisions, and GitHub planning issues. Each implementation issue should identify its target implementation repository/component, acceptance criteria, and relevant verification commands. The number and structure of implementation repositories and Go packages remain undecided.
+This home repo is the source of definitions, architecture decisions, and GitHub implementation-planning issues. Each implementation issue should identify its target implementation repository/component, acceptance criteria, and relevant verification commands. Implementation PRs link to their home-repo issues and relevant decisions; cross-repository links are not assumed to close issues automatically.
 
 Also deferred: the permanent project name; distribution and licensing; a real first-adopter workflow (choose one before freezing APIs); multi-node coordination design; additional storage, messaging, and identity adapters; concrete crypto/authentication mechanisms; numeric RTO/RPO and availability targets; and stable API compatibility guarantees.

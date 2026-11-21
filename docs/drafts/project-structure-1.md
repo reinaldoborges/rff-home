@@ -1,6 +1,6 @@
 # RF-DSF
 
-Working name: **RF-DSF (RF Distributed Systems Framework)**. This tree describes logical areas, not repository or Go package boundaries. See [the architecture baseline](../architecture.md) for the agreed scope and deferred decisions.
+Working name: **RF-DSF (RF Distributed Systems Framework)**. This tree describes logical areas. See [the architecture baseline](../architecture.md) for the agreed initial repository and Go package boundaries, scope, and deferred decisions.
 
 - **Framework**
   - Domain modeling: optional Go-native patterns for types, invariants, validation, and transitions; no mandatory DDD layering or ORM.
@@ -37,5 +37,5 @@ The first Go implementation is a usable single-node baseline: the host applicati
 - Multi-node service-manager coordination and production control plane.
 - Production identity providers, MFA, SPIFFE, concrete crypto APIs, and KMS adapters.
 - MCP, cloud-specific adapters, and additional persistence/messaging backends.
-- Permanent project name, distribution/license, implementation repository/package layout, and numeric availability/RTO/RPO targets.
+- Permanent project name, distribution/license, and numeric availability/RTO/RPO targets.
 - Selection of a real first-adopter workflow; choose it before freezing APIs.
