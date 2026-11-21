@@ -23,7 +23,9 @@ If implementation exposes a missing decision or conflicts with the design, stop 
 
 ## Bootstrap and verification
 
-Initial implementation work establishes the Go module, pins the supported Go toolchain, and adds root agent guidance, executable check commands, and CI before dependent feature issues require those commands. Bootstrap issues state the commands they introduce and verify them in their own changes. Pending or placeholder commands are not passed checks.
+Initial implementation work establishes the Go module, pins the supported Go toolchain, and adds root agent guidance and executable check commands. Bootstrap issues state the commands they introduce and verify them in their own changes. Pending or placeholder commands are not passed checks.
+
+CI is temporarily deferred to [Add Go implementation CI](https://github.com/reinaldoborges/rff-home/issues/14). Feature work may proceed using the verified local baseline until CI is available; CI remains required for the first-slice usability gate.
 
 Document and verify the actual formatting, vet, test, and race-check commands in the implementation repository. Prefer standard Go tooling unless a specific need justifies more tooling; no exact commands or Go version are prescribed before the repository exists.
 
