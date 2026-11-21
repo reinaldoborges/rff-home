@@ -32,12 +32,15 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 | Changed request with same key | A changed operation, machine version, event/input, or notification override is an explicit conflict. |
 | Concurrent request acceptance | Snapshot, idempotency mapping, and active-entity reservation are durably created atomically; concurrent matching requests produce one execution, and a storage failure before persistence means not accepted. |
 | Competing request | A different request while an execution is active returns busy/conflict. |
+| Workflow and external-input ingress | A command starts a workflow; external events and human decisions enter through typed Go APIs and are durably deduplicated. Repeating an input with the same identity and semantic payload returns its prior outcome; changed payload with the same identity conflicts. |
+| Timer ingress and recovery | The runtime persists and fires timers. After delay or restart, expiry and other deadline behavior follow the persisted deadline, not timer delivery time. |
 | Competing terminal decisions | Membership decisions serialize; the first valid committed transition wins and later incompatible decisions conflict. |
 | Worker activity identity | Re-delivery of the same hook invocation reuses its stable transition/hook/retry-cycle identity and idempotency key; each started attempt has a distinct attempt number and activity-lease generation. |
 | Stale worker report | After an activity lease is reclaimed with a newer generation, a late renewal or result from the prior worker is rejected; it cannot advance the transition or commit domain state. |
 | Retry after handler failure | The selector is not rerun; the same target and pinned policy continue. `Retry` runs only after policy authorization, and retry-hook failure is recorded and handled under that policy. |
 | Retry exhaustion | Exhausted attempts or a policy requiring intervention enters `NeedsIntervention` with the old current state intact. |
 | Explicit intervention | Authorized retry resumes the same execution; explicit pre-commit abort invokes recovery and leaves the old current state committed. |
+| Operator control phase gates | Inspection can read any execution; retry or pre-commit abort is accepted only from `NeedsIntervention`, and notification retry or waiver only from `NotificationRepair`. The runtime rejects invalid-phase control requests without changing execution or domain state. |
 | Attempt timeout and deadline | Per-attempt timeout, overall transition deadline, and lease expiry produce distinct handling; no implicit framework retry policy is used. |
 | Worker loss with unknown outcome | A started attempt whose worker disappears consumes an attempt under the pinned transition policy and may be redelivered with the same logical identity; a claim lost before start consumes no attempt. |
 | Lease reclaim | After worker loss and lease expiry, the same execution can be reclaimed; a stale fencing token cannot commit. |
@@ -64,7 +67,9 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 
 ## Authorization
 
-Use seeded opaque identities for the group owner, an active member, an invited user, and an identity from another group. For every settled authorization rule, include at least one allowed and one denied example, including group isolation, owner-only invitation and active-member removal, active-member task permissions, and assignment only to a current group member. Invited and removed users have no group access. Ownership transfer remains excluded until its separate lifecycle decision is resolved.
+Use seeded opaque identities for the group owner, an active member, an invited user, an identity from another group, and a test-only operator. The operator can inspect/list fixture executions and request phase-valid controls, but has no task-manager permissions; task-manager roles do not by themselves grant operator controls. The fixture authorizes these operations and records the actor and action in its application-owned audit. The development CLI uses this same fixture policy and remains local/test-only.
+
+For every settled authorization rule, include at least one allowed and one denied example, including group isolation, owner-only invitation and active-member removal, active-member task permissions, assignment only to a current group member, and operator controls. Invited and removed users have no group access. Ownership transfer remains excluded until its separate lifecycle decision is resolved.
 
 ## Out of scope
 
