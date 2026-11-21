@@ -27,6 +27,20 @@ The selected, versioned execution policy is serializable and persisted with the 
 
 Explicit, phase-checked controls may retry or abort a `NeedsIntervention` execution, and retry or waive a `NotificationRepair` handoff. The application owns authorization for these controls.
 
+## Worker, activity, and coordinator contract
+
+The persisted transition execution remains the durable authority for its state-hook work. Each `Enter`, `Transition`, `Retry`, or `Recover` invocation is dispatched as worker activity within that execution; it does not create a second top-level activity record. The hook receives the immutable typed execution context and returns success or a live Go error. The pinned application failure classifier maps errors to safe persisted failure data. In the first slice, the hook contract has no arbitrary typed result payload and does not expose a general free-standing activity API.
+
+The coordinator reconciles due and recoverable executions from persistence; transient wakeups only reduce latency. It owns and renews the per-entity transition lease, advances the persisted protocol, dispatches hooks, and invokes the host's idempotent fenced commit after successful work. Workers claim and renew separate activity leases, execute the dispatched hook, and report outcomes; they do not commit domain state. The activity lease generation fences claims, renewals, and reports. The per-entity transition generation is distinct and fences the host commit. A report or renewal from a stale activity generation is rejected; an expired transition lease can be reclaimed only with a new per-entity generation.
+
+A logical hook invocation has a stable identity scoped to transition execution, hook kind, and retry cycle where applicable. Redelivery of that invocation reuses its idempotency key; each started worker attempt has its own attempt number and activity-lease generation. The host commit's stable operation ID remains separate and transition-scoped. A started attempt whose outcome is unknown because its worker disappeared consumes an attempt under the pinned transition policy; a claim lost before the attempt starts does not. If work may have succeeded before its result became durable, it can run again, so application side effects remain idempotent. Neither lease fences a downstream system that does not participate in that fencing protocol.
+
+The pinned transition policy governs state-hook attempt limits, retry classification, and timeouts; a second activity retry policy is not layered over those hooks. Notification delivery is different: a durable notification intent is dispatched as its own worker activity, with a stable identity/idempotency key and an independent delivery retry lifecycle. The notification intent remains the source of truth, and consumer delivery does not delay transition completion after durable handoff.
+
+On graceful shutdown, a worker stops claiming new activities and drains current work while renewing its activity leases until the caller-provided shutdown deadline. At that deadline it cancels active work and stops renewing; it does not report fabricated success. After lease expiry, the coordinator recovers the same execution under its pinned policy. Workers report heartbeat, ready/draining state, and capacity. Coordinator/persistence health is distinct from execution capacity; zero available workers is degraded capacity while durable acceptance may continue.
+
+Lease TTLs and renewal intervals, worker-staleness thresholds, and graceful-shutdown deadlines are explicit runtime settings. Their values are deployment and implementation choices, not universal timing guarantees. Expiry is a recovery/reclaim signal, not a domain timeout; per-attempt and overall transition deadlines remain governed by the pinned execution policy.
+
 ## Transition execution record
 
 The framework defines a generic transition-execution record and typed persistence port. The host application configures and injects an adapter; the framework does not own the entity schema or store. SQLite may be provided as the first adapter. The application may store transition metadata alongside its entity or in a related store.

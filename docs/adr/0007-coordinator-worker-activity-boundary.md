@@ -1,0 +1,3 @@
+# Keep transition execution authoritative over worker activities
+
+The coordinator reconciles persisted transition executions and owns per-entity transition leases and commit progression, while workers claim separately fenced activity leases and report outcomes. Transition hooks run within the authoritative transition record rather than a second activity record, avoiding competing durable state; notification delivery runs independently from durable intent. This split supports recovery and rejects stale worker reports, while retaining at-least-once delivery and requiring idempotent external effects.
