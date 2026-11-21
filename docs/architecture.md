@@ -60,7 +60,7 @@ The task manager is a small conformance domain, not the product's first industry
 
 ## First implementation slice
 
-The first Go implementation should prove a single-node runtime end to end: typed deterministic state machines, an application-injected transition persistence adapter (with SQLite available as the first adapter), transient in-memory wakeups with recovery polling, leased worker/activity contracts, and the task-manager fixture with invitation workflows. Tests should cover duplicate delivery, retries, expiry, process restart/recovery, and authorization denials.
+The first Go implementation should prove a single-node runtime end to end: typed deterministic state machines, an application-injected transition persistence adapter (with SQLite available as the first adapter), transient in-memory wakeups with recovery polling, leased worker/activity contracts, and the task-manager fixture with invitation workflows. The required black-box scenarios and failure gate are in the [First-slice acceptance matrix](first-slice-acceptance.md).
 
 The first slice excludes multi-node coordination, cloud-specific adapters, production identity-provider integrations, concrete crypto/KMS APIs, MCP, and a production control plane. Framework APIs remain experimental until validated adopters establish a stable release.
 
