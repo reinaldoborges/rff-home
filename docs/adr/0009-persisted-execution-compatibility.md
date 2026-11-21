@@ -1,0 +1,5 @@
+# Preserve or explicitly migrate pinned execution behavior
+
+Persist a stable machine ID and version that pin selectors, state hooks, and failure classification, with separately versioned input codecs. If required behavior is unavailable, block the affected execution without changing its phase or releasing its reservation rather than silently substituting current code. An unreadable transition-record schema fails adapter initialization without writes.
+
+Allow a host-authorized, audited, fenced per-execution migration only before durable work success. An application-supplied converter and runtime validation produce an atomic record update while preserving original request identity, execution history, policy meaning, deadlines, and operation identities. The host coordinates any domain-store cutover; commit-pending and later phases settle under their original version. This favors explicit recovery and preserved prior effects over automatically reinterpreting in-flight work, without claiming atomic migration across stores.
