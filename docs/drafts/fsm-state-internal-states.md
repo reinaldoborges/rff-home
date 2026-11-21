@@ -19,13 +19,13 @@ Each target state implements a typed handler contract with distinct `Enter`, `Tr
 
 The host supplies typed persistence and commit operations. A handler reports work success but does not mutate a framework-owned entity. The host commits `current = next` only after successful work, checking the expected `previous` and fencing token. Where state and execution share a store, commit them atomically; across stores, make the commit idempotent and recoverable.
 
-Acceptance uses separate initialization and transition operations and returns the persisted execution plus an error only when the request was not accepted. The typed execution status is one of `Waiting`, `Running`, `Notifying`, `NotificationRepair`, `NeedsIntervention`, `Aborting`, `Complete`, or `Aborted`; domain state IDs remain separate. A post-acceptance failure is recorded on the execution, not returned as an acceptance error.
+Acceptance uses separate initialization and transition operations and returns the persisted execution plus an error only when the request was not accepted. The typed execution status is one of `Waiting`, `Running`, `Notifying`, `NotificationRepair`, `NeedsIntervention`, `CommitRejected`, `Aborting`, `Complete`, or `Aborted`; domain state IDs remain separate. A post-acceptance failure is recorded on the execution, not returned as an acceptance error.
 
 Every request has an idempotency key and typed input or immutable reference. For a given entity, key reuse returns the prior execution only when operation kind, machine ID and version, event/input, and notification override match; otherwise it conflicts. If semantic equality cannot be verified because the necessary codec or identity representation is unavailable, return an explicit compatibility error rather than guessing or creating work, including for retained terminal records. Notification override is tri-state: inherit the selected default, enable, or disable.
 
 The selected, versioned execution policy is serializable and persisted with the execution. `MaxAttempts` includes the first attempt; per-attempt timeout, overall transition deadline, retry-delay schedule, and lease expiry are distinct. There are no implicit framework retry defaults. A versioned application mapper converts a live Go error into a safe serializable failure envelope and a disposition. Persist both with the execution; replay only the envelope to later hooks, never the raw error.
 
-Explicit, phase-checked controls may retry or abort a `NeedsIntervention` execution, and retry or waive a `NotificationRepair` handoff. The application owns authorization for these controls.
+Explicit, phase-checked controls may retry or abort a `NeedsIntervention` execution, abort a `CommitRejected` execution, and retry or waive a `NotificationRepair` handoff. A rejected commit cannot be retried. The application owns authorization for these controls.
 
 ## Worker, activity, and coordinator contract
 
@@ -63,9 +63,13 @@ An application-supplied, side-effect-free migrator converts the versioned persis
 
 Preserve the original accepted request data for idempotency comparisons, execution and operation/activity identities, reservation, attempt history and counts, deadlines, notification choice, and effective policy meaning. Migration cannot silently reset attempts, extend deadlines, or change retry policy. The host coordinates domain-schema cutover, prevents conflicting domain changes, and verifies the migrated source against authoritative domain state, including absence for initialization. If verification fails, keep execution blocked. The runtime migrates its record only: separate domain and transition stores are not atomically migrated, and the host's fenced commit still checks the expected source.
 
-The application owns the committed `current` state. It remains at the source while work is pending and changes only after target-state work succeeds. On completion, the live entity contains only `current`; transition history retains its source and target. Persist attempt outcomes and terminal transition history alongside the execution's current protocol status; this is not a generic event-sourced log.
+The application owns the committed `current` state. This execution does not change it while work is pending, and commits its target only after target-state work succeeds. An independently changed authoritative state is not restored to the snapshot on rejection. On completion, the live entity contains only `current`; transition history retains its source and target. Persist attempt outcomes and terminal transition history alongside the execution's current protocol status; this is not a generic event-sourced log.
 
 After handler work succeeds, persist that success and a stable commit operation ID before calling the host commit boundary. This durable commit-pending marker lets recovery distinguish successful work from an unfinished attempt. The host commit compares the expected `previous` state and current fencing generation. It is idempotent by execution ID and writes a durable commit receipt atomically with the domain-state update. If work success is durable but the receipt is not yet recorded in the execution record, recovery retries or reconciles the same host operation; it does not rerun successful work. If the success marker was not durable, work may repeat and must be idempotent.
+
+The host may definitively reject the commit if the expected source, including absence for initialization, or a current domain invariant fails. With a current fence, it atomically records a durable rejection receipt keyed by the same operation ID, leaving authoritative domain state unchanged and creating no notification intent. Once recorded, the rejection remains final even if conditions later change; a new request is required. Reconciliation checks for an existing success or rejection receipt before re-evaluating the operation, so a lost response cannot change its outcome. An unknown transport or storage outcome is reconciled, not treated as rejection; a stale fence cannot create a rejection receipt and requires a current fence before further mutation.
+
+On a rejection receipt, record safe rejection details and enter `CommitRejected` while retaining the entity reservation. Do not retry the successful hook or rejected commit, migrate the execution, or permit notification controls. An authorized explicit abort runs the existing recovery hook and policy, records possible remaining external effects, and releases the reservation only when the abort is durable. Rejection and recovery do not promise to undo external effects.
 
 When domain state, execution metadata, and notification outbox share a transactional store, one fenced transaction updates `current`, records the commit outcome, and writes enabled notification intent. When stores are separate, the host receipt remains atomic with domain state; the runtime reconciles that receipt and continues the same execution. The durable notification choice in the accepted execution drives an idempotent outbox handoff keyed by execution ID. Do not mark the execution complete until handoff is durable. A failed handoff remains recoverable through `NotificationRepair`; consumer delivery retries independently. No exactly-once effects are promised across stores.
 
@@ -86,10 +90,11 @@ stateDiagram-v2
     NotificationRepair --> Notifying: authorized handoff retry
     NotificationRepair --> Complete: authorized waiver durably recorded
     Running --> NeedsIntervention: policy exhausted or requires a decision
+    Running --> CommitRejected: host records definitive commit rejection
+    CommitRejected --> Aborting: authorized pre-commit abort
     Waiting --> NeedsIntervention: deadline policy requires a decision
     NeedsIntervention --> Waiting: authorized retry of same transition
     NeedsIntervention --> Aborting: explicit pre-commit abort
-    Waiting --> Aborting: explicit abort before work
     Aborting --> Aborted: recovery outcome durably recorded
     Complete --> [*]
     Aborted --> [*]
@@ -99,9 +104,10 @@ stateDiagram-v2
 - **Running**: the target state's transition handler is executing.
 - **Notifying**: the domain state is already committed; notification intent is being durably handed off.
 - **Complete**: the transition execution is settled. A later request creates a new execution record.
-- **NeedsIntervention**: a pre-commit application policy or exhausted retry budget requires an application/operator decision. The old current state remains committed, and the pending target remains recorded.
+- **NeedsIntervention**: a pre-commit application policy or exhausted retry budget requires an application/operator decision. This execution has not committed its target, and the pending target remains recorded.
+- **CommitRejected**: the host has durably rejected the commit; the reservation remains held until authorized abort and recovery. No domain update or notification intent is made by this execution.
 - **NotificationRepair**: the target current state is already committed, but notification intent is not durably handed off. Retry the handoff or record an authorized waiver; do not roll back or abort the committed domain transition.
-- **Aborted**: the transition was explicitly abandoned; it is not a successful completion. The old current state remains committed, and history records that external side effects may remain.
+- **Aborted**: the transition was explicitly abandoned; it is not a successful completion. This execution has not committed its target, and history records that external side effects may remain.
 
 Errors, timeouts, retry counters, and lease ownership are execution metadata/outcomes, not domain states. The application supplies and versions/pins the policy for retry classification, attempt limits, retry delay, per-attempt execution timeout, and overall transition deadline. Lease expiry is only lock recovery. The framework supplies no hidden retry count, timeout, or retry schedule.
 
@@ -135,5 +141,6 @@ The target state's implementation performs the work for a transition into that s
 6. On retry exhaustion or a policy requiring intervention before commit, retain the failure history and pending target. An authorized application/operator may retry the same transition or explicitly abort it.
 7. An explicit pre-commit abort runs the recovery hook (which may be a no-op), records any possible remaining side effects, leaves current unchanged, and releases the lease only after the abort is durable.
 8. For `NotificationRepair`, retain the lease and new current state. An authorized application/operator may retry the handoff or record a durable waiver; only then release the lease and settle the transition execution.
+9. For a definitive host commit rejection, record the rejection receipt and enter `CommitRejected`; an authorized abort runs recovery before releasing the reservation. Do not restore an independently changed domain state or retry the rejected commit.
 
 No cross-store exactly-once guarantee is made. If the application stores domain state separately from transition metadata, its commit operation and any external side effects must be idempotent and recoverable.

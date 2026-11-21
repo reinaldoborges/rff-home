@@ -56,6 +56,9 @@ The relationship between a user and a group, including its lifecycle and role. A
 **Group owner**:
 The sole owner of a group, who is also a member and manages the group's membership.
 
+**Ownership transfer**:
+The change of a group's owner from one active member to another.
+
 **Group member**:
 A user with an active membership in a group and permission to manage that group's tasks.
 

@@ -21,6 +21,11 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 | Group closure | Pending invitations become revoked with a group-closed reason; closed-group access and further task/membership changes are denied. |
 | Removal with assigned tasks | Owner removal is rejected while a task remains assigned to the member; the membership remains Active and access is unchanged. |
 | Active membership removal | After assigned tasks are unassigned or reassigned, owner removal ends group access atomically, retains the Removed Membership and historical task references, and records the owner and time in the application-owned business audit. |
+| Ownership transfer | The current owner transfers to another Active member of the same open group without recipient acceptance; both memberships remain Active, task assignments are unchanged, owner permissions switch atomically, and the business audit records actor, former owner, new owner, and time. No notification is required. |
+| Invalid ownership transfer | A non-owner, self-transfer, invited or removed recipient, cross-group recipient, or transfer in a closed group is rejected without changing ownership or creating a successful outcome. |
+| Ownership transfer replay | An authenticated original actor's identical actor-and-group-scoped key returns the recorded outcome without another transfer, even after losing ownership, membership, or group access. Changed parameters conflict. A crash cannot persist the transfer without its audit and idempotency outcome. |
+| Ownership transfer races | Deterministic races with another transfer, recipient removal, and group closure serialize at the authoritative domain boundary. A successful transfer has exactly one owner; no removal of the current owner or change to a closed group commits. |
+| Previously accepted owner work | A former owner's validly accepted work is not deauthorized by transfer, but its commit rechecks current domain invariants. A removal of the new owner or a change to a closed group is rejected; new owner-only requests from the former owner are denied. |
 | Terminal history | Terminal Membership records are immutable; a later invitation creates a new record. |
 | Reinvite after removal | Re-inviting a removed user creates a new Membership record; the prior Removed record remains unchanged and only one Invited or Active membership exists per group/user. |
 
@@ -40,11 +45,14 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 | Retry after handler failure | The selector is not rerun; the same target and pinned policy continue. `Retry` runs only after policy authorization, and retry-hook failure is recorded and handled under that policy. |
 | Retry exhaustion | Exhausted attempts or a policy requiring intervention enters `NeedsIntervention` with the old current state intact. |
 | Explicit intervention | Authorized retry resumes the same execution; explicit pre-commit abort invokes recovery and leaves the old current state committed. |
-| Operator control phase gates | Inspection can read any execution; retry or pre-commit abort is accepted only from `NeedsIntervention`, and notification retry or waiver only from `NotificationRepair`. The runtime rejects invalid-phase control requests without changing execution or domain state. |
+| Operator control phase gates | Inspection can read any execution; retry is accepted from `NeedsIntervention`, pre-commit abort from `NeedsIntervention` or `CommitRejected`, and notification retry or waiver only from `NotificationRepair`. `CommitRejected` cannot retry or migrate. The runtime rejects invalid-phase control requests without changing execution or domain state. |
 | Attempt timeout and deadline | Per-attempt timeout, overall transition deadline, and lease expiry produce distinct handling; no implicit framework retry policy is used. |
 | Worker loss with unknown outcome | A started attempt whose worker disappears consumes an attempt under the pinned transition policy and may be redelivered with the same logical identity; a claim lost before start consumes no attempt. |
 | Lease reclaim | After worker loss and lease expiry, the same execution can be reclaimed; a stale fencing token cannot commit. |
 | Crash around domain commit | After a durable work-success marker, recovery repeats or reconciles the same idempotent host commit using its execution ID; it does not rerun successful work, and the host-side receipt prevents duplicate state application. |
+| Definitive commit rejection | After successful hook work, a source mismatch or failed current invariant yields a durable fenced rejection receipt and `CommitRejected`, without domain mutation or notification intent. Later invariant changes do not make that operation succeed; the reservation remains held until authorized abort and recovery are durably complete. Possible external effects remain visible. |
+| Rejection reconciliation | A lost rejection response or restart reconciles the same receipt without rerunning the successful hook or changing the result, including after domain conditions change. A lost success response similarly remains successful. Unknown transport/storage outcomes and stale fences are not recorded as definitive rejection; stale fences cannot write a rejection receipt. |
+| Rejected source drift | If authoritative state differs from the accepted source, rejection and subsequent abort leave that authoritative state intact rather than restoring the snapshot. |
 
 ## Restart and notification recovery
 
@@ -76,7 +84,7 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 
 Use seeded opaque identities for the group owner, an active member, an invited user, an identity from another group, and a test-only operator. The operator can inspect/list fixture executions and request phase-valid controls, but has no task-manager permissions; task-manager roles do not by themselves grant operator controls. The fixture authorizes these operations and records the actor and action in its application-owned audit. The development CLI uses this same fixture policy and remains local/test-only.
 
-For every settled authorization rule, include at least one allowed and one denied example, including group isolation, owner-only invitation and active-member removal, active-member task permissions, assignment only to a current group member, and operator controls. Invited and removed users have no group access. Ownership transfer remains excluded until its separate lifecycle decision is resolved.
+For every settled authorization rule, include at least one allowed and one denied example, including group isolation, owner-only invitation, active-member removal and ownership transfer, active-member task permissions, assignment only to a current group member, and operator controls. Invited and removed users have no group access; an authenticated original actor's read-only transfer replay is the exception specified above.
 
 ## Out of scope
 
