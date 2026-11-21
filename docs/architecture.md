@@ -89,6 +89,6 @@ The first Go slice will live in `reinaldoborges/rff-go`, separate from this home
 
 ## Home repo responsibilities and deferred decisions
 
-This home repo is the source of definitions, architecture decisions, and GitHub implementation-planning issues. Each implementation issue should identify its target implementation repository/component, acceptance criteria, and relevant verification commands. Implementation PRs link to their home-repo issues and relevant decisions; cross-repository links are not assumed to close issues automatically.
+This home repo is the source of definitions, architecture decisions, and GitHub implementation-planning issues. The [coding-agent implementation contract](implementation-agent-contract.md) specifies repository guidance, issue handoff, executable examples and contracts, bootstrap, and verification gates. Implementation PRs link to their home-repo issues and relevant decisions; cross-repository links are not assumed to close issues automatically.
 
 Also deferred: the permanent project name; distribution and licensing; a real first-adopter workflow (choose one before freezing APIs); multi-node coordination design; additional storage, messaging, and identity adapters; concrete crypto/authentication mechanisms; numeric RTO/RPO and availability targets; and stable API compatibility guarantees.
