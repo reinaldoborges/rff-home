@@ -6,7 +6,7 @@ This document records the agreed design baseline for RF-DSF. It guides the futur
 
 RF-DSF is a domain-neutral framework for application and platform engineers building stateful, long-running systems. Coding agents are first-class users of its documentation and examples. The framework is language-neutral in concept, with Go as the first implementation language, and may be paired with a portable, self-hosted runtime.
 
-Reliability, security, auditability, operability, resilience, and disaster recovery are design goals, not blanket guarantees. Distribution and licensing remain undecided.
+Reliability, security, auditability, operability, resilience, and disaster recovery are design goals, not blanket guarantees. Both the home repository and the Go implementation use Apache License 2.0; distribution plans remain undecided.
 
 ## Logical areas
 
@@ -53,7 +53,7 @@ These are conceptual boundaries; the initial repository and package boundaries a
 - Keep the runtime embeddable and typed-Go-first. The Go API supports workflow starts, external event/human-decision delivery, execution inspection, and operator-control requests. The first slice has no built-in HTTP server, webhook/event receiver, or external scheduler ingress; applications may add those as adapters later.
 - The runtime enforces phase gates on operator controls: retry or pre-commit abort from `NeedsIntervention`, with retry of recovery resuming `Recover` rather than the rejected or abandoned transition, and notification retry or waiver only from `NotificationRepair`. A definitive `CommitRejected` receipt automatically authorizes recovery, not a commit retry. Migration has the separate pre-commit safety gate above. Controls cannot bypass compatibility checks. The host application owns authorization and actor attribution/audit; the framework has no authentication, authorization, or operator-identity model.
 - A local development/test CLI may start and signal task-manager fixture workflows, list and inspect executions, and request retry, abort, notification repair, or waiver through the fixture application's authorization policy. Its test-only operator identity is distinct from task-manager users and grants no group permissions. The CLI makes no production operations or identity claims. MCP integration is deferred pending a concrete use case.
-- SQLite is the first candidate adapter for transition records. In-memory pub/sub is only a wakeup mechanism. MySQL, PostgreSQL, object storage, caches, secrets stores, cloud connectors, and dedicated brokers are candidates, not commitments.
+- SQLite is the first implemented adapter for transition records, not an exclusive storage commitment. In-memory pub/sub is only a wakeup mechanism. MySQL, PostgreSQL, object storage, caches, secrets stores, cloud connectors, and dedicated brokers are candidates, not commitments.
 
 ### Test Suite
 
@@ -79,7 +79,7 @@ The first slice excludes multi-node coordination, cloud-specific adapters, produ
 
 ## First implementation repository
 
-The first Go slice will live in `reinaldoborges/rff-go`, separate from this home repo, with one root Go module, `github.com/reinaldoborges/rff-go`. This is an experimental import path; changing it later requires consumer migration. The repository has not yet been created.
+The first Go slice lives in [`reinaldoborges/rff-go`](https://github.com/reinaldoborges/rff-go), separate from this home repo, with one root Go module, `github.com/reinaldoborges/rff-go`. This is an experimental import path; changing it later requires consumer migration.
 
 - Provide public `fsm` and `runtime` packages. The FSM is usable without the runtime; the runtime uses the FSM and owns its execution and persistence contracts.
 - Put provided persistence adapters under `adapters/`. They implement runtime contracts and are selected and injected by the host. Reusable framework and runtime code must not depend on concrete adapters or the task-manager fixture.
@@ -91,4 +91,4 @@ The first Go slice will live in `reinaldoborges/rff-go`, separate from this home
 
 This home repo is the source of definitions, architecture decisions, and GitHub implementation-planning issues. The [coding-agent implementation contract](implementation-agent-contract.md) specifies repository guidance, issue handoff, executable examples and contracts, bootstrap, and verification gates. Implementation PRs link to their home-repo issues and relevant decisions; cross-repository links are not assumed to close issues automatically.
 
-Also deferred: the permanent project name; distribution and licensing; a real first-adopter workflow (choose one before freezing APIs); multi-node coordination design; additional storage, messaging, and identity adapters; concrete crypto/authentication mechanisms; numeric RTO/RPO and availability targets; and stable API compatibility guarantees.
+Also deferred: the permanent project name; distribution plans; a real first-adopter workflow (choose one before freezing APIs); multi-node coordination design; additional storage, messaging, and identity adapters; concrete crypto/authentication mechanisms; numeric RTO/RPO and availability targets; and stable API compatibility guarantees.
