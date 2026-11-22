@@ -37,6 +37,17 @@ A logical hook invocation has a stable identity scoped to transition execution, 
 
 The pinned transition policy governs state-hook attempt limits, retry classification, and timeouts; a second activity retry policy is not layered over those hooks. Notification delivery is different: a durable notification intent is dispatched as its own worker activity, with a stable identity/idempotency key and an independent delivery retry lifecycle. The notification intent remains the source of truth, and consumer delivery does not delay transition completion after durable handoff.
 
+`MaxAttempts` is one shared budget per control cycle for started state-hook
+attempts, including successful `Retry` hooks. Before dispatching another
+automatic pre-commit hook, enter
+`NeedsIntervention` if the budget is exhausted; a successful `Retry` on the
+last attempt therefore cannot be followed by transition work automatically.
+An authorized intervention retry or abort starts a new `MaxAttempts` budget;
+the execution retains its total attempt history and numbering.
+For an authorized automatic retry, use the next delay in the pinned schedule;
+after the last specified delay, repeat that delay. An empty schedule cannot
+authorize a timed retry and requires `NeedsIntervention` instead.
+
 On graceful shutdown, a worker stops claiming new activities and drains current work while renewing its activity leases until the caller-provided shutdown deadline. At that deadline it cancels active work and stops renewing; it does not report fabricated success. After lease expiry, the coordinator recovers the same execution under its pinned policy. Workers report heartbeat, ready/draining state, and capacity. Coordinator/persistence health is distinct from execution capacity; zero available workers is degraded capacity while durable acceptance may continue.
 
 Lease TTLs and renewal intervals, worker-staleness thresholds, and graceful-shutdown deadlines are explicit runtime settings. Their values are deployment and implementation choices, not universal timing guarantees. Expiry is a recovery/reclaim signal, not a domain timeout; per-attempt and overall transition deadlines remain governed by the pinned execution policy.
