@@ -1,6 +1,6 @@
 # RF-DSF Architecture Baseline
 
-This document records the agreed design baseline for RF-DSF. It guides the future implementation repository; it is not a complete API specification.
+This document records the agreed design baseline for RF-DSF. It guides the implementation repository; it is not a complete API specification.
 
 ## Product shape
 
