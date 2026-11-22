@@ -35,6 +35,13 @@ The coordinator reconciles due and recoverable executions from persistence; tran
 
 A logical hook invocation has a stable identity scoped to transition execution, hook kind, and retry cycle where applicable. Redelivery of that invocation reuses its idempotency key; each started worker attempt has its own attempt number and activity-lease generation. The host commit's stable operation ID remains separate and transition-scoped. A started attempt whose outcome is unknown because its worker disappeared consumes an attempt under the pinned transition policy; a claim lost before the attempt starts does not. If work may have succeeded before its result became durable, it can run again, so application side effects remain idempotent. Neither lease fences a downstream system that does not participate in that fencing protocol.
 
+After a worker is lost, the pinned classifier handles the unknown outcome. If
+policy authorizes retry of an `Enter` or `Transition` invocation, run the
+`Retry` hook before redelivering that same invocation with its original
+identity and idempotency key. A failed or unknown `Retry` or `Recover` hook is
+retried directly with the same identity under the same policy; it does not
+nest another `Retry` hook.
+
 The pinned transition policy governs state-hook attempt limits, retry classification, and timeouts; a second activity retry policy is not layered over those hooks. Notification delivery is different: a durable notification intent is dispatched as its own worker activity, with a stable identity/idempotency key and an independent delivery retry lifecycle. The notification intent remains the source of truth, and consumer delivery does not delay transition completion after durable handoff.
 
 `MaxAttempts` is one shared budget per control cycle for started state-hook
