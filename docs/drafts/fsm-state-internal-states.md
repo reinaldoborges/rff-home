@@ -25,7 +25,7 @@ Every request has an idempotency key and typed input or immutable reference. For
 
 The selected, versioned execution policy is serializable and persisted with the execution. `MaxAttempts` includes the first attempt; per-attempt timeout, overall transition deadline, retry-delay schedule, and lease expiry are distinct. There are no implicit framework retry defaults. A versioned application mapper converts a live Go error into a safe serializable failure envelope and a disposition. Persist both with the execution; replay only the envelope to later hooks, never the raw error.
 
-Explicit, phase-checked controls may retry or abort a `NeedsIntervention` execution, abort a `CommitRejected` execution, and retry or waive a `NotificationRepair` handoff. A rejected commit cannot be retried. The application owns authorization for these controls.
+Explicit, phase-checked controls may retry or abort a `NeedsIntervention` execution and retry or waive a `NotificationRepair` handoff. A definitive `CommitRejected` receipt itself authorizes abort and recovery; the rejected commit cannot be retried. The application owns authorization for explicit controls.
 
 ## Worker, activity, and coordinator contract
 
@@ -50,7 +50,16 @@ automatic pre-commit hook, enter
 `NeedsIntervention` if the budget is exhausted; a successful `Retry` on the
 last attempt therefore cannot be followed by transition work automatically.
 An authorized intervention retry or abort starts a new `MaxAttempts` budget;
-the execution retains its total attempt history and numbering.
+it also starts a new deadline at the control's durable acceptance time plus the
+pinned `OverallTimeout`. Preserve the original deadline, all prior cycle
+deadlines, total attempt history, and numbering. Identical control replay returns
+the recorded outcome without renewing the budget or deadline again.
+Definitive commit rejection automatically starts an abort recovery cycle with
+the same fresh budget and deadline; an unknown outcome or stale fence does not.
+Deadline or budget exhaustion during recovery enters `NeedsIntervention` with
+the reservation held. An authorized retry resumes `Recover` rather than the
+original transition. Before any attempt has started, retry starts the original
+work directly; otherwise it resumes the blocked hook under the retry rules above.
 For an authorized automatic retry, use the next delay in the pinned schedule;
 after the last specified delay, repeat that delay. An empty schedule cannot
 authorize a timed retry and requires `NeedsIntervention` instead.
@@ -87,7 +96,7 @@ After handler work succeeds, persist that success and a stable commit operation 
 
 The host may definitively reject the commit if the expected source, including absence for initialization, or a current domain invariant fails. With a current fence, it atomically records a durable rejection receipt keyed by the same operation ID, leaving authoritative domain state unchanged and creating no notification intent. Once recorded, the rejection remains final even if conditions later change; a new request is required. Reconciliation checks for an existing success or rejection receipt before re-evaluating the operation, so a lost response cannot change its outcome. An unknown transport or storage outcome is reconciled, not treated as rejection; a stale fence cannot create a rejection receipt and requires a current fence before further mutation.
 
-On a rejection receipt, record safe rejection details and enter `CommitRejected` while retaining the entity reservation. Do not retry the successful hook or rejected commit, migrate the execution, or permit notification controls. An authorized explicit abort runs the existing recovery hook and policy, records possible remaining external effects, and releases the reservation only when the abort is durable. Rejection and recovery do not promise to undo external effects.
+On a rejection receipt, record safe rejection details and enter `CommitRejected` while retaining the entity reservation. Do not retry the successful hook or rejected commit, migrate the execution, or permit notification controls. The definitive rejection authorizes the coordinator to begin abort recovery automatically, passing safe rejection data to `Recover`; release the reservation only after successful recovery and durable abort. Rejection and recovery do not promise to undo external effects.
 
 When domain state, execution metadata, and notification outbox share a transactional store, one fenced transaction updates `current`, records the commit outcome, and writes enabled notification intent. When stores are separate, the host receipt remains atomic with domain state; the runtime reconciles that receipt and continues the same execution. The durable notification choice in the accepted execution drives an idempotent outbox handoff keyed by execution ID. Do not mark the execution complete until handoff is durable. A failed handoff remains recoverable through `NotificationRepair`; consumer delivery retries independently. No exactly-once effects are promised across stores.
 
@@ -109,10 +118,12 @@ stateDiagram-v2
     NotificationRepair --> Complete: authorized waiver durably recorded
     Running --> NeedsIntervention: policy exhausted or requires a decision
     Running --> CommitRejected: host records definitive commit rejection
-    CommitRejected --> Aborting: authorized pre-commit abort
+    CommitRejected --> Aborting: definitive rejection authorizes recovery
     Waiting --> NeedsIntervention: deadline policy requires a decision
     NeedsIntervention --> Waiting: authorized retry of same transition
     NeedsIntervention --> Aborting: explicit pre-commit abort
+    NeedsIntervention --> Aborting: authorized retry of recovery
+    Aborting --> NeedsIntervention: recovery policy exhausted or deadline elapsed
     Aborting --> Aborted: recovery outcome durably recorded
     Complete --> [*]
     Aborted --> [*]
@@ -122,10 +133,10 @@ stateDiagram-v2
 - **Running**: the target state's transition handler is executing.
 - **Notifying**: the domain state is already committed; notification intent is being durably handed off.
 - **Complete**: the transition execution is settled. A later request creates a new execution record.
-- **NeedsIntervention**: a pre-commit application policy or exhausted retry budget requires an application/operator decision. This execution has not committed its target, and the pending target remains recorded.
-- **CommitRejected**: the host has durably rejected the commit; the reservation remains held until authorized abort and recovery. No domain update or notification intent is made by this execution.
+- **NeedsIntervention**: a pre-commit or recovery policy, exhausted budget, or elapsed deadline requires an application/operator decision. This execution has not committed its target; the pending target, blocked stage, and reservation remain recorded.
+- **CommitRejected**: the host has durably rejected the commit; the reservation remains held through automatic abort and recovery. No domain update or notification intent is made by this execution.
 - **NotificationRepair**: the target current state is already committed, but notification intent is not durably handed off. Retry the handoff or record an authorized waiver; do not roll back or abort the committed domain transition.
-- **Aborted**: the transition was explicitly abandoned; it is not a successful completion. This execution has not committed its target, and history records that external side effects may remain.
+- **Aborted**: the transition was abandoned by explicit command or definitive host commit rejection, after successful recovery; it is not a successful completion. This execution has not committed its target, and history records that external side effects may remain.
 
 Errors, timeouts, retry counters, and lease ownership are execution metadata/outcomes, not domain states. The application supplies and versions/pins the policy for retry classification, attempt limits, retry delay, per-attempt execution timeout, and overall transition deadline. Lease expiry is only lock recovery. The framework supplies no hidden retry count, timeout, or retry schedule.
 
@@ -145,7 +156,7 @@ The original error labels map to protocol outcomes as follows:
 The target state's implementation performs the work for a transition into that state. During creation (`previous = null`), the selected initial state's entry hook runs through the same protocol. The common typed Go state contract includes transition, initial-entry, retry, and recovery hooks; a state with no work implements an explicit no-op.
 
 - The retry hook runs only after an attempt fails and the pinned policy authorizes a retry. It may prepare or reconcile partial work but cannot change the selected target or choose retry limits. A retry-hook failure is recorded and handled under the same policy.
-- The recovery hook runs only for an explicit pre-commit abort/repair, not for automatic retries or post-commit notification repair. It may compensate or reconcile partial side effects. An empty implementation means no recovery work is needed. Its progress is persisted and uses the same retry/deadline policy.
+- The recovery hook runs for an explicit pre-commit abort or definitive commit rejection, not for automatic transition retries or post-commit notification repair. It may compensate or reconcile partial side effects. An empty implementation means no recovery work is needed. Its progress is persisted and uses the same retry/deadline policy, with a fresh control-cycle budget and deadline.
 - Retry and recovery code must be idempotent because work may be repeated after failure.
 - Each transition rule has a notification default, which the caller may override for that execution. Persist the chosen setting. When enabled, persist a notification intent/outbox with the commit where possible; complete on durable handoff, not consumer processing. If the handoff cannot be durably recorded after domain commit, enter `NotificationRepair`; an authorized decision may retry or durably waive it. Delivery retries independently after handoff. When notification is disabled, skip it and complete after the domain commit.
 
@@ -157,8 +168,8 @@ The target state's implementation performs the work for a transition into that s
 4. On success, commit the target as current and clear pending transition fields. Record source/target in history and persist notification intent when enabled. If handoff cannot be made durable after the domain commit, enter `NotificationRepair` with the new current state.
 5. On a retryable failure, apply the pinned application policy, wait as directed, run the retry hook, then retry the same transition. Per-attempt timeout and overall transition deadline are distinct; application policy decides their outcomes.
 6. On retry exhaustion or a policy requiring intervention before commit, retain the failure history and pending target. An authorized application/operator may retry the same transition or explicitly abort it.
-7. An explicit pre-commit abort runs the recovery hook (which may be a no-op), records any possible remaining side effects, leaves current unchanged, and releases the lease only after the abort is durable.
+7. An explicit pre-commit abort, or a definitive host rejection, runs the recovery hook (which may be a no-op), records any possible remaining side effects, leaves current unchanged, and releases the lease only after successful recovery and durable abort.
 8. For `NotificationRepair`, retain the lease and new current state. An authorized application/operator may retry the handoff or record a durable waiver; only then release the lease and settle the transition execution.
-9. For a definitive host commit rejection, record the rejection receipt and enter `CommitRejected`; an authorized abort runs recovery before releasing the reservation. Do not restore an independently changed domain state or retry the rejected commit.
+9. For a definitive host commit rejection, record the rejection receipt and enter `CommitRejected`; automatically run recovery before releasing the reservation. Do not restore an independently changed domain state or retry the rejected commit.
 
 No cross-store exactly-once guarantee is made. If the application stores domain state separately from transition metadata, its commit operation and any external side effects must be idempotent and recoverable.
