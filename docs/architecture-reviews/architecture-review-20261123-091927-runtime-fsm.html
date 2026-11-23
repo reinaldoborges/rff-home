@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Runtime + FSM coordination review</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "strict" });
+  </script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #fafaf9; color: #172033; }
+    main { max-width: 1120px; margin: auto; padding: 3rem 1.5rem; }
+    a { color: #047857; text-decoration: underline; }
+    .card { background: white; border: 1px solid #d6d3d1; border-radius: 1rem; padding: 1.5rem; margin: 2rem 0; }
+    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 1rem; }
+    .visual { background: #f5f5f4; border: 1px solid #e7e5e4; border-radius: .75rem; padding: 1rem; }
+    .box { background: white; border: 1px solid #94a3b8; border-radius: .45rem; padding: .6rem; margin: .4rem 0; text-align: center; }
+    .deep { background: #1e293b; color: white; border: 3px solid #0f172a; padding: 1rem; border-radius: .5rem; }
+    .seam { border-top: 2px dashed #64748b; margin: .7rem 0; }
+    .arrow { text-align: center; color: #64748b; font-weight: bold; }
+    .leak { color: #b91c1c; }
+    .badge { display: inline-block; border-radius: 99px; padding: .2rem .65rem; font-size: .75rem; font-weight: 700; }
+    .strong { background: #d1fae5; color: #065f46; }
+    .explore { background: #fef3c7; color: #92400e; }
+    .muted { color: #475569; }
+    code { font-size: .86em; overflow-wrap: anywhere; }
+    th, td { padding: .75rem; border-bottom: 1px solid #e7e5e4; text-align: left; vertical-align: top; }
+    h1, h2, h3 { line-height: 1.15; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="text-xs uppercase tracking-widest text-emerald-700 font-bold">RF-DSF · Architecture review · 23 November 2026</p>
+    <h1 class="text-4xl font-serif font-bold">Runtime + state machine coordination</h1>
+    <p class="muted">Implementation examined: <a href="https://github.com/reinaldoborges/rff-go/tree/2ec2fc330c163b621113e253136f74e81debef5b">rff-go at 2ec2fc3</a>. Experimental first slice; not a production-readiness claim.</p>
+    <p class="text-sm muted">Legend: outlined box = module · dashed line = seam · red text = knowledge leaking to host · dark box = proposed deep module.</p>
+  </header>
+
+  <section class="card">
+    <h2 class="text-2xl font-serif font-bold">Scenario verdict</h2>
+    <table class="w-full text-sm">
+      <thead><tr><th>Scenario</th><th>What works now</th><th>What the host must supply</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Domain states and work</strong><br><span class="badge strong">Supported with conditions</span></td><td>Host-defined states, event selection, target-state hooks, retry policy and recovery hooks. Each accepted transition is durable.</td><td>Persistence and fenced domain commit, coordinator and worker scheduling, and idempotent external effects. Hook work happens <em>before</em> its target becomes committed; it is not an open-ended task running after entering that state.</td></tr>
+        <tr><td><strong>Next state automatically</strong><br><span class="badge explore">Host orchestration required</span></td><td>The host can submit another event after the prior execution completes.</td><td>A durable continuation and reconciliation: the runtime does not automatically chain successful transitions. A request from the running hook encounters the active entity reservation; commit is not yet assured.</td></tr>
+        <tr><td><strong>Next state after user interaction</strong><br><span class="badge strong">Supported with host wiring</span></td><td>Commit a domain state representing the wait; later submit a typed human decision or other event.</td><td>Authorization, UI, mapping input to a transition, deduplication and recovery. No built-in human-wait UI or receiver.</td></tr>
+        <tr><td><strong>One entity for a batch</strong><br><span class="badge explore">Possible, host-managed</span></td><td>An application can use one entity to represent a batch and put many records behind its hooks.</td><td>Per-record checkpointing, idempotency, partial failures and recovery. The runtime sees and retries the batch transition, not individual records.</td></tr>
+        <tr><td><strong>One entity per record</strong><br><span class="badge explore">Possible, host-managed</span></td><td>Reuse a machine definition for distinct entity IDs; each entity can have its own transition execution and retry history.</td><td>Durable discovery/fan-out, stable per-record identities, concurrency limits, and aggregation. No native batch lifecycle is established by these contracts.</td></tr>
+      </tbody>
+    </table>
+    <p class="text-sm muted">Evidence: <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/fsm/machine.go#L32-L105">machine definition and hooks</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/record.go#L70-L104">per-entity execution</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/acceptance.go#L49-L67">active reservation</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/ingress.go#L13-L29">typed inputs</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/README.md#L32-L85">host scheduling and timer limitations</a>.</p>
+  </section>
+
+  <section id="candidates">
+    <article id="continuation" class="card">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">1. Deepen transition continuation</h2><span class="badge strong">Strong</span><span class="badge explore">host persistence adapters</span></div>
+      <p class="text-sm"><strong>Files:</strong> <code>runtime/acceptance.go</code>, <code>runtime/ingress.go</code>, <code>runtime/commit.go</code>, <code>runtime/notification.go</code>, <code>adapters/sqlite/atomic_commit.go</code>; <code>docs/architecture.md</code>.</p>
+      <div class="grid2">
+        <div class="visual"><h3 class="font-bold">Before · host pieces together continuation</h3>
+          <div class="box">Target-state hook succeeds</div><div class="arrow">↓</div>
+          <div class="box">Commit + release reservation</div><div class="arrow leak">↓ crash gap / replay / busy</div>
+          <div class="box">Host detects completion → submits next event</div>
+          <div class="seam"></div><p class="text-sm leak">Host must connect durable intent, timing and duplicate handling.</p>
+        </div>
+        <div class="visual"><h3 class="font-bold">After · one continuation module</h3>
+          <div class="box">Host defines when to advance</div><div class="seam"></div>
+          <div class="deep"><strong>Durable continuation</strong><p class="text-sm">Remember intent · wait for successful commit and reservation release · reconcile · deduplicate next request</p></div>
+          <div class="arrow">↓</div><div class="box">Next accepted transition, or visible failure</div>
+        </div>
+      </div>
+      <p><strong>Problem:</strong> Hook results report success or failure, not a next event; the entity remains reserved during the hook, and an in-memory follow-up after commit can be lost on crash.</p>
+      <p><strong>Solution:</strong> Explore a durable continuation module at the host/runtime seam, without changing application ownership of the next-state decision. A host-owned transactional outbox plus reconciliation is a possible adapter, not a currently guaranteed facility.</p>
+      <p><strong>Locality / leverage / tests:</strong> Concentrate replay, readiness and failure handling once; test crashes before and after commit, duplicate delivery, <code>ErrBusy</code>, rejected commits, and human decisions after a long wait through the module interface.</p>
+      <p class="text-sm muted"><strong>Deletion test:</strong> Removing continuation handling does not remove its complexity; every automatically advancing host must rebuild it. Notification intent is optional, and delivery is independent, so it is not itself a general automatic-transition guarantee.</p>
+      <p class="text-sm"><a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/hook_runner.go#L24-L40">Hook result</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/commit.go#L29-L36">commit receipt and fence</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/adapters/sqlite/atomic_commit.go#L82-L104">same-file commit and release</a> · <a href="../adr/0001-separate-state-machines-from-workflow-execution.md">ADR 0001</a> · <a href="../adr/0002-at-least-once-activity-delivery.md">ADR 0002</a>.</p>
+    </article>
+
+    <article id="effects" class="card">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">2. Deepen the side-effect recovery seam</h2><span class="badge strong">Strong</span><span class="badge explore">external adapters</span></div>
+      <p class="text-sm"><strong>Files:</strong> <code>fsm/machine.go</code>, <code>fsm/execution.go</code>, <code>runtime/hook_runner.go</code>, <code>runtime/coordinator.go</code>, <code>runtime/worker.go</code>.</p>
+      <div class="grid2">
+        <div class="visual"><h3 class="font-bold">Before · one hook covers many effects</h3>
+          <pre class="mermaid">
+flowchart LR
+  H["Target-state hook"] --> A["External call A"]
+  A --> B["External call B"]
+  B --> C["Commit target"]
+  R["Retry after unknown outcome"] -.-> H
+          </pre>
+          <p class="text-sm leak">Retry can repeat A even if B failed. Commit rejection can follow successful effects.</p>
+        </div>
+        <div class="visual"><h3 class="font-bold">After · effect-aware host module</h3>
+          <div class="box">Each transition: one meaningful domain step</div><div class="seam"></div>
+          <div class="deep"><strong>Host effect / recovery module</strong><p class="text-sm">Stable effect identities · durable receipts · reconcile unknown outcomes · explicit compensation</p></div>
+          <div class="arrow">↓</div><div class="box">External adapters + fenced domain commit</div>
+        </div>
+      </div>
+      <p><strong>Problem:</strong> Retries and recovery are per transition hook, not per downstream call; a timed-out hook can continue and recovery cannot guarantee reversal of an external effect.</p>
+      <p><strong>Solution:</strong> Explore concentrating host-owned effect identities, receipts and reconciliation behind a deep module; split work across meaningful states where the domain permits it. Do not assume one state automatically provides exactly-once calls.</p>
+      <p><strong>Locality / leverage / tests:</strong> One place to handle duplicate and unknown outcomes; test a downstream success followed by process loss, retry, late completion and definitive commit rejection against the same seam.</p>
+      <p class="text-sm muted"><strong>Deletion test:</strong> Without this module, receipt and idempotency rules recur in each hook. Use an adapter seam where actual downstream implementations vary; avoid inventing one for a single hypothetical dependency.</p>
+      <p class="text-sm"><a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/fsm/execution.go#L27-L47">Stable attempt metadata</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/coordinator.go#L127-L167">hook progression</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/README.md#L32-L40">timeout caveat</a> · <a href="../adr/0002-at-least-once-activity-delivery.md">ADR 0002</a> · <a href="../adr/0010-definitive-commit-rejection.md">ADR 0010</a> · <a href="../adr/0011-recovery-control-cycles.md">ADR 0011</a>.</p>
+    </article>
+
+    <article id="batch" class="card">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">3. Deepen batch orchestration only when needed</h2><span class="badge explore">Worth exploring</span><span class="badge explore">host-owned module</span></div>
+      <p class="text-sm"><strong>Files:</strong> <code>runtime/record.go</code>, <code>runtime/acceptance.go</code>, <code>runtime/coordinator.go</code>, <code>runtime/timer.go</code>, <code>internal/taskmanager/task_runtime.go</code>.</p>
+      <div class="grid2">
+        <div class="visual"><h3 class="font-bold">Before · two possible host designs</h3>
+          <div class="box"><strong>Batch entity</strong> → one transition → records A, B, C</div>
+          <p class="text-sm leak">One retry / reservation; per-record progress is host-owned.</p>
+          <div class="box"><strong>Record entities</strong> → A / B / C executions</div>
+          <p class="text-sm leak">Independent retry histories; fan-out and batch completion are host-owned.</p>
+        </div>
+        <div class="visual"><h3 class="font-bold">After · batch knowledge has locality</h3>
+          <div class="box">Periodic trigger or host command</div><div class="seam"></div>
+          <div class="deep"><strong>Host batch module</strong><p class="text-sm">Durable membership and progress · bounded dispatch · partial outcomes · restart reconciliation</p></div>
+          <div class="arrow">↓</div><div class="box">Batch entity or independent record entities</div>
+        </div>
+      </div>
+      <p><strong>Problem:</strong> Per-entity acceptance and hook retry do not define batch enumeration, atomic fan-out, aggregation or per-record checkpoints.</p>
+      <p><strong>Solution:</strong> Explore a host batch module once a concrete renewal or payment workflow establishes whether batch-wide or per-record identity is meaningful; retain the existing per-entity runtime protocol.</p>
+      <p><strong>Locality / leverage / tests:</strong> Reuse progress and reconciliation across recurring runs; test duplicate schedule, crash mid-fan-out, one record failure, rerun and concurrent writes. Validate scale separately: reconciliation scans active executions and the MySQL adapter serializes transactions.</p>
+      <p class="text-sm muted"><strong>Deletion test:</strong> If more than one recurring workflow needs durable fan-out, deleting this module would spread enumeration, retry and completion rules across hosts. With only one workflow, keep it application-local until reuse is real.</p>
+      <p class="text-sm"><a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/record.go#L70-L104">Entity and execution</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/internal/taskmanager/task_runtime.go#L13-L56">Reusable machine definition</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/coordinator.go#L77-L101">Active scan</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/README.md#L175-L197">MySQL serialization</a> · <a href="../adr/0007-coordinator-worker-activity-boundary.md">ADR 0007</a>.</p>
+    </article>
+  </section>
+
+  <section id="top-recommendation" class="card" style="border-left: 6px solid #059669">
+    <h2 class="text-2xl font-serif font-bold">Top recommendation</h2>
+    <p><a href="#continuation"><strong>Transition continuation</strong></a> first: it connects successful state work to the next requested transition without losing progress between commit and the next request, and is shared by automatic multi-step and batch workflows.</p>
+  </section>
+</main>
+</body>
+</html>

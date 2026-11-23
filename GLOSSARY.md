@@ -19,8 +19,14 @@ A deterministic model of application-visible states and permitted event/guard-dr
 **Transition execution**:
 The persisted processing of one accepted request to move an entity from its committed state to a selected target state, including work attempts and notification handoff.
 
+**Continuation**:
+The application-directed advance of a workflow from a committed state without waiting for an external decision.
+
 **Activity**:
 An application-defined operation that a workflow invokes to perform work outside its deterministic state machine. An activity may be retried.
+
+**Downstream operation**:
+A host-defined interaction with another system that reads data or causes an effect.
 
 **Worker**:
 A runtime component that claims and executes activities.

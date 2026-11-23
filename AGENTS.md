@@ -12,6 +12,10 @@ Use `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `won
 
 This is a single-context repo with root `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.
 
+### FSM and runtime
+
+For host state machines, transitions, continuation, retries, or batch workflows, read `docs/agents/fsm-runtime.md`.
+
 ### Architecture reports
 
 When generating an architecture-review HTML report, save it in `docs/architecture-reviews/` (create the folder if needed).

@@ -2,6 +2,8 @@
 
 This document records the agreed design baseline for RF-DSF. It guides the implementation repository; it is not a complete API specification.
 
+Approved follow-on decisions for [durable continuation](adr/0012-durable-transition-continuation.md) and [downstream operation tracking](adr/0013-track-downstream-operations-within-transitions.md) describe intended behavior, not implemented first-slice features. For scenario guidance, see [FSM and runtime usage](agents/fsm-runtime.md).
+
 ## Product shape
 
 RF-DSF is a domain-neutral framework for application and platform engineers building stateful, long-running systems. Coding agents are first-class users of its documentation and examples. The framework is language-neutral in concept, with Go as the first implementation language, and may be paired with a portable, self-hosted runtime.
