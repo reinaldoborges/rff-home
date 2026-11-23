@@ -9,9 +9,8 @@ experimental; passing the first-slice gate is not a production-readiness claim.
 **Status:** Manual transition requests and the durable transition runtime are
 available. Runtime-managed automatic Continuation and Downstream operation
 tracking are approved designs, **not implemented**. Do not call them as
-existing facilities. See [ADR 0012](../adr/0012-durable-transition-continuation.md)
-and [ADR 0013](../adr/0013-track-downstream-operations-within-transitions.md)
-when implementing those features.
+existing facilities. See the [implementation contract](../fsm-runtime-implementation-contract.md)
+and its linked ADRs when implementing those features.
 
 ## Choose the execution model
 

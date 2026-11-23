@@ -2,7 +2,7 @@
 
 This document records the agreed design baseline for RF-DSF. It guides the implementation repository; it is not a complete API specification.
 
-Approved follow-on decisions for [durable continuation](adr/0012-durable-transition-continuation.md) and [downstream operation tracking](adr/0013-track-downstream-operations-within-transitions.md) describe intended behavior, not implemented first-slice features. For scenario guidance, see [FSM and runtime usage](agents/fsm-runtime.md).
+Approved follow-on decisions for [durable continuation](adr/0012-durable-transition-continuation.md) and [downstream operation tracking](adr/0013-track-downstream-operations-within-transitions.md) describe intended behavior, not implemented first-slice features. For implementation details, see the [FSM/runtime implementation contract](fsm-runtime-implementation-contract.md); for host scenarios, see [FSM and runtime usage](agents/fsm-runtime.md).
 
 ## Product shape
 

@@ -39,3 +39,6 @@ Human decisions continue through existing typed ingress after the application
 commits a meaningful waiting state, rather than holding a transition execution
 open. This decision describes intended behavior, not an implemented
 Continuation facility.
+
+For the detailed implementation contract, see
+[Continuation and downstream-operation implementation contract](../fsm-runtime-implementation-contract.md).

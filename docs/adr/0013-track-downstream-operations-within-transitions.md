@@ -43,3 +43,6 @@ be blocked. Retain operation identities and replay evidence with transition
 history; host-owned references must remain available for replay. This decision
 describes intended behavior, not an implemented tracking facility, and does
 not promise exactly-once external effects.
+
+For the detailed implementation contract, see
+[Continuation and downstream-operation implementation contract](../fsm-runtime-implementation-contract.md).
