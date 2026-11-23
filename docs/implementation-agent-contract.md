@@ -1,6 +1,6 @@
 # First-slice coding-agent implementation contract
 
-This contract guides implementation planning in this home repository and work in the future `reinaldoborges/rff-go` repository. The home repository remains authoritative for the architecture, glossary, ADRs, and [first-slice acceptance matrix](first-slice-acceptance.md).
+This contract guides implementation planning in this home repository and work in the [`reinaldoborges/rff-go`](https://github.com/reinaldoborges/rff-go) repository. The home repository remains authoritative for the architecture, glossary, ADRs, and [first-slice acceptance matrix](first-slice-acceptance.md).
 
 ## Repository guidance and executable contracts
 
