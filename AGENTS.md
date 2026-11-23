@@ -11,3 +11,7 @@ Use `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `won
 ### Domain docs
 
 This is a single-context repo with root `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.
+
+### Architecture reports
+
+When generating an architecture-review HTML report, save it in `docs/architecture-reviews/` (create the folder if needed).
