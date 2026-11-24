@@ -5,7 +5,7 @@ This matrix defines when the first Go RF-DSF implementation is usable as a singl
 ## Conformance approach
 
 - Assert observable results through the typed API and host persistence port: request acceptance/rejection, execution status and failure data, committed domain state, and notification intent/delivery.
-- Keep the suite black-box and reusable across adapters included in the first slice. Use deterministic fakes and fault injection for controlled failures, and run persistence/restart cases against at least one real durable adapter. SQLite is the currently implemented adapter; it is not an exclusive choice.
+- Keep the suite black-box and reusable across adapters included in the first slice. Use deterministic fakes and fault injection for controlled failures, and run persistence/restart cases against at least one real durable adapter. SQLite and MySQL adapters are implemented; MySQL checks require a configured database and are not in Go CI.
 - Control time for expiry, attempt timeouts, deadlines, retry delays, and lease expiry. Use deterministic barriers for races rather than timing sleeps; include an actual process restart for durable recovery.
 - A denial or invalid domain request must be explicitly rejected before acceptance, leave committed domain state unchanged, and create no domain side effect or notification. The application may keep its own audit record.
 

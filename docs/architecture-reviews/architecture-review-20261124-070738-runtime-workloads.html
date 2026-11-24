@@ -37,11 +37,13 @@
     <p class="text-xs uppercase tracking-widest text-emerald-700 font-bold">RF-DSF · Architecture review · 24 November 2026</p>
     <h1 class="text-4xl font-serif font-bold">Runtime workload, workers and ingress</h1>
     <p class="muted">Go implementation: <a href="https://github.com/reinaldoborges/rff-go/tree/fc58b4ce103caf5e282f84db6755db66ba4a5378">master at fc58b4c</a>. Source inspected at integration commit cb78ad7; GitHub's comparison reports no file differences from the merged revision. Experimental single-node baseline, not a production-readiness claim.</p>
+    <p class="text-sm"><strong>Status update · 24 November 2026:</strong> The original findings and diagrams below are historical. Status notes reflect the embedded lifecycle merged in <a href="https://github.com/reinaldoborges/rff-go/pull/6">rff-go#6</a>, at <a href="https://github.com/reinaldoborges/rff-go/tree/63edecf4220f297ac08d6c52b405f386ef5557bd">Go master 63edecf</a>.</p>
     <p class="text-sm muted">Legend: outlined box = module · dashed line = seam · red text = host knowledge · dark box = proposed deep module.</p>
   </header>
 
   <section class="card">
     <h2 class="text-2xl font-serif font-bold">What runs today</h2>
+    <p class="text-sm"><strong>Current status:</strong> The host can now embed an optional lifecycle that continuously polls and supervises explicitly enabled progress paths and bounded workers; the description and diagram below show the earlier baseline. See the <a href="https://github.com/reinaldoborges/rff-go/blob/63edecf4220f297ac08d6c52b405f386ef5557bd/README.md#embedded-transition-lifecycle">lifecycle documentation</a>.</p>
     <div class="grid2">
       <div>
         <pre class="mermaid">
@@ -72,6 +74,7 @@ flowchart TD
   <section id="candidates">
     <article id="lifecycle" class="card">
       <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">1. Deepen the runtime lifecycle</h2><span class="badge strong">Strong</span><span class="badge explore">in-process composition</span></div>
+      <p class="text-sm"><strong>Status: implemented.</strong> The optional lifecycle checks startup work, polls enabled paths, supervises errors, reports readiness separately from capacity, and drains on shutdown. The host supplies dependencies and must ensure one logical lifecycle coordinates a store; external-effect safety remains host-owned. See <a href="https://github.com/reinaldoborges/rff-go/pull/6">rff-go#6</a>.</p>
       <p class="text-sm"><strong>Files:</strong> <code>runtime/reconciliation_loop.go</code>, <code>runtime/coordinator.go</code>, <code>runtime/commit.go</code>, <code>runtime/worker.go</code>, <code>runtime/continuation_discovery.go</code>, <code>examples/renewal/host.go</code>.</p>
       <div class="grid2">
         <div class="visual"><h3 class="font-bold">Before · each host composes progress</h3>
@@ -96,6 +99,7 @@ flowchart TD
 
     <article id="worker" class="card">
       <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">2. Deepen continuous worker execution</h2><span class="badge explore">Worth exploring</span><span class="badge explore">durable storage adapters</span></div>
+      <p class="text-sm"><strong>Status: implemented locally.</strong> The lifecycle repeatedly claims hook work with bounded local capacity and supervised worker paths; it drains active work on shutdown. This does not add a global capacity limit or multi-node coordination. Cancellation-ignoring external work can outlive a shutdown deadline.</p>
       <p class="text-sm"><strong>Files:</strong> <code>runtime/worker.go</code>, <code>runtime/coordinator.go</code>, <code>adapters/sqlite/activity_worker.go</code>, <code>runtime/worker_shutdown_test.go</code>.</p>
       <div class="grid2">
         <div class="visual"><h3 class="font-bold">Before · single-claim primitive</h3>
@@ -119,6 +123,7 @@ flowchart TD
 
     <article id="ingress" class="card">
       <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">3. Deepen durable trigger ingress</h2><span class="badge explore">Worth exploring</span><span class="badge explore">host ingress adapters</span></div>
+      <p class="text-sm"><strong>Status: partially addressed.</strong> Explicitly enabled typed-input, timer, Continuation and notification paths are supervised and polled by the lifecycle. External receivers, authorization, domain mapping and durable handler deduplication remain host-owned; no HTTP or broker adapter was added.</p>
       <p class="text-sm"><strong>Files:</strong> <code>runtime/ingress.go</code>, <code>runtime/acceptance.go</code>, <code>runtime/timer.go</code>, <code>runtime/timer_worker.go</code>, <code>runtime/continuation_driver.go</code>.</p>
       <div class="grid2">
         <div class="visual"><h3 class="font-bold">Before · host connects triggers to work</h3>
@@ -142,6 +147,7 @@ flowchart TD
 
     <article id="timers" class="card">
       <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">4. Explore scheduled workload triggers</h2><span class="badge speculative">Speculative</span><span class="badge explore">host domain scheduling</span></div>
+      <p class="text-sm"><strong>Status: timer delivery is managed; recurring scheduling remains open.</strong> The lifecycle can supervise explicitly enabled timer workers, and the renewal lifecycle demo includes a one-shot timer. Recurring occurrence semantics, batch scheduling, authorization and delivery deduplication remain outside that capability.</p>
       <p class="text-sm"><strong>Files:</strong> <code>runtime/timer.go</code>, <code>runtime/timer_worker.go</code>, <code>runtime/ingress.go</code>, <code>examples/renewal/host.go</code>.</p>
       <div class="grid2">
         <div class="visual"><h3 class="font-bold">Before · durable timer, host-owned meaning</h3>
@@ -166,6 +172,7 @@ flowchart TD
 
   <section id="top-recommendation" class="card" style="border-left: 6px solid #059669">
     <h2 class="text-2xl font-serif font-bold">Top recommendation</h2>
+    <p class="text-sm"><strong>Status:</strong> The lifecycle recommendation was implemented; the following is the original recommendation, retained for context.</p>
     <p><a href="#lifecycle"><strong>Deepen the runtime lifecycle</strong></a> first: it makes accepted transition work, worker execution and enabled durable triggers progress in an alive host without each application rebuilding the coordination loop. Explore worker and ingress composition within that context, not as independent promises of new transports or distributed scheduling.</p>
   </section>
 </main>

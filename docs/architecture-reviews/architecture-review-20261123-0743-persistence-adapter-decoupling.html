@@ -43,6 +43,7 @@
         <p class="max-w-3xl text-sm leading-6 text-slate-600">
           The runtime persistence seam is structurally decoupled from SQLite. The clearest opportunity is to test that substitutability across more than acceptance.
         </p>
+        <p class="max-w-3xl text-sm leading-6 text-slate-600"><strong>Status update · 24 November 2026:</strong> The original review remains below. The status note reflects <a class="underline" href="https://github.com/reinaldoborges/rff-go/tree/63edecf4220f297ac08d6c52b405f386ef5557bd">Go master at 63edecf</a>.</p>
       </header>
 
       <section id="candidates" class="space-y-8">
@@ -57,6 +58,7 @@
               <span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">ports &amp; adapters</span>
             </div>
           </div>
+          <p class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950"><strong>Status: partially addressed by a second durable adapter.</strong> SQLite and MySQL run shared runtime contracts, including tracked-operation contracts added in <a class="underline" href="https://github.com/reinaldoborges/rff-go/pull/5">rff-go#5</a>. This is not the proposed expanded in-memory test adapter, and MySQL checks require an explicitly configured database rather than running in CI. See <a class="underline" href="https://github.com/reinaldoborges/rff-go/blob/63edecf4220f297ac08d6c52b405f386ef5557bd/docs/testing-runtime-conformance.md">conformance verification</a>.</p>
           <p class="font-mono text-sm text-slate-600">runtime/record.go · internal/runtimecontract/ · adapters/sqlite/runtime_contract_test.go · runtime/memory_test.go</p>
           <div class="grid gap-5 md:grid-cols-2">
             <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">

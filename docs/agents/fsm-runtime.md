@@ -6,9 +6,9 @@ the [Go implementation README](https://github.com/reinaldoborges/rff-go/blob/mas
 documents the current implementation and host wiring. The Go framework is
 experimental; passing the first-slice gate is not a production-readiness claim.
 
-**Status:** Manual transitions, durable Continuation, and optional Downstream
-operation tracking are implemented in the experimental Go runtime. The host
-must schedule reconciliation and supply domain persistence, authorization,
+**Status:** Manual transitions, durable Continuation, optional Downstream
+operation tracking, and an optional embedded lifecycle are implemented in the
+experimental Go runtime. The host supplies domain persistence, authorization,
 policies, and downstream adapters. See the
 [implementation contract](../fsm-runtime-implementation-contract.md) for the
 full safety and persistence requirements.
@@ -25,9 +25,10 @@ full safety and persistence requirements.
    [standalone example](https://github.com/reinaldoborges/rff-go/tree/master/examples/fsm).
 3. Use the runtime when accepted transitions need durable progress, worker
    retries, and recovery. Supply the persistence adapter, versioned codecs,
-   host domain commit and authorization. Schedule workers and all applicable
-   reconciliation scans; wakeups are hints, so poll and recover after errors.
-   The host still owns domain state, side-effect idempotency, and audit.
+   host domain commit and authorization. Use the embedded lifecycle or schedule
+   the lower-level workers and reconciliation scans yourself. Wakeups are hints,
+   so poll and recover after errors. The host still owns domain state,
+   side-effect idempotency, and audit.
 4. Choose domain states that represent meaningful, committed milestones or
    waiting points. Put external work for a milestone in its **target** handler:
    it runs before that target becomes current. Split a process when milestones
@@ -70,8 +71,9 @@ re-running successful work. See [ADR 0004](../adr/0004-host-supplied-transition-
   UI or receiver.
 - **Runtime-managed Continuation:** Opt in per committed state and supply
   version-pinned, side-effect-free behavior and a separate explicit policy.
-  Schedule durable discovery and the driver; provide commit markers for
-  separate stores and a host acceptance fence that detects changed revisions,
+  Enable lifecycle supervision of durable discovery and the driver, or schedule
+  them yourself; provide commit markers for separate stores and a host
+  acceptance fence that detects changed revisions,
   including A-to-B-to-A. The runtime reconciles unknown acceptance and supports
   authorized retry or waiver. Its own attempt budget and active-time deadline
   pause during recorded reservation waits. A call from the target hook is too
@@ -81,6 +83,32 @@ re-running successful work. See [ADR 0004](../adr/0004-host-supplied-transition-
 - **Host-managed progression:** The host may instead durably discover the
   committed milestone, persist a stable next request, and reconcile delivery
   itself, including reservation waits and unknown acceptance.
+
+## Run workers and accept inputs
+
+The host can embed `runtime.NewLifecycle` in a long-running process to poll
+transition and commit work and run a bounded hook-worker pool. Configure
+Continuation, typed inputs, timer delivery, and notifications explicitly
+before `Start`; store support alone does not enable them. The host must also
+schedule any required scans not managed by the lifecycle, including
+compatibility revalidation and separate-store successor recovery.
+
+Monitor path errors and `Status()`: readiness reflects successful checks and
+running paths, not an empty backlog or available worker capacity. Recoverable
+errors retry; correct stopped paths and call `RestartPath`. Call `Shutdown`
+even if startup reports an error, since independent paths may be running.
+Shutdown stops claims and drains work; a deadline error does not mean an
+external call that ignores cancellation has stopped. Ensure one logical
+lifecycle coordinates a store; global capacity and multi-node coordination are
+not provided.
+
+Typed input and timer handlers can run under the lifecycle, but the host owns
+external receivers, authentication, authorization, domain mapping, and
+durable handler deduplication by input or timer ID. Timer scheduling is not
+atomic with domain state: reconcile missing timers from durable host state.
+Timers are not a recurring or batch scheduler. For configuration and a
+continuous runnable example, see the Go
+[lifecycle guide](https://github.com/reinaldoborges/rff-go/blob/master/README.md#embedded-transition-lifecycle).
 
 ## Set a policy for each transition
 
