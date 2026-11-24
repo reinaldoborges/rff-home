@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Runtime workload and ingress architecture review</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "strict" });
+  </script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #fafaf9; color: #172033; }
+    main { max-width: 1150px; margin: auto; padding: 3rem 1.5rem; }
+    a { color: #047857; text-decoration: underline; }
+    .card { background: white; border: 1px solid #d6d3d1; border-radius: 1rem; padding: 1.5rem; margin: 2rem 0; }
+    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 1rem; }
+    .visual { background: #f5f5f4; border: 1px solid #e7e5e4; border-radius: .75rem; padding: 1rem; }
+    .box { background: white; border: 1px solid #94a3b8; border-radius: .45rem; padding: .6rem; margin: .4rem 0; text-align: center; }
+    .deep { background: #1e293b; color: white; border: 3px solid #0f172a; padding: 1rem; border-radius: .5rem; }
+    .seam { border-top: 2px dashed #64748b; margin: .7rem 0; }
+    .arrow { text-align: center; color: #64748b; font-weight: bold; }
+    .leak { color: #b91c1c; }
+    .badge { display: inline-block; border-radius: 99px; padding: .2rem .65rem; font-size: .75rem; font-weight: 700; }
+    .strong { background: #d1fae5; color: #065f46; }
+    .explore { background: #fef3c7; color: #92400e; }
+    .speculative { background: #e2e8f0; color: #334155; }
+    .muted { color: #475569; }
+    code { font-size: .86em; overflow-wrap: anywhere; }
+    th, td { padding: .75rem; border-bottom: 1px solid #e7e5e4; text-align: left; vertical-align: top; }
+    h1, h2, h3 { line-height: 1.15; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="text-xs uppercase tracking-widest text-emerald-700 font-bold">RF-DSF · Architecture review · 24 November 2026</p>
+    <h1 class="text-4xl font-serif font-bold">Runtime workload, workers and ingress</h1>
+    <p class="muted">Go implementation: <a href="https://github.com/reinaldoborges/rff-go/tree/fc58b4ce103caf5e282f84db6755db66ba4a5378">master at fc58b4c</a>. Source inspected at integration commit cb78ad7; GitHub's comparison reports no file differences from the merged revision. Experimental single-node baseline, not a production-readiness claim.</p>
+    <p class="text-sm muted">Legend: outlined box = module · dashed line = seam · red text = host knowledge · dark box = proposed deep module.</p>
+  </header>
+
+  <section class="card">
+    <h2 class="text-2xl font-serif font-bold">What runs today</h2>
+    <div class="grid2">
+      <div>
+        <pre class="mermaid">
+flowchart TD
+  I["Host command / event"] --> A["Typed acceptance"]
+  A --> S[("Durable transition execution")]
+  S --> C["Coordinator scan"]
+  C --> H["Durable hook claim"]
+  H --> W["Worker RunOne"]
+  W --> S
+  S --> K["Commit reconciliation"]
+  K --> D[("Host domain state")]
+  D --> T["Continuation discovery + drive"]
+  T -. "new acceptance" .-> A
+        </pre>
+      </div>
+      <div>
+        <p><strong>A live executable is host-composed.</strong> The library does not automatically start a permanent runtime or worker pool. The host starts scans and repeatedly schedules claims.</p>
+        <p><strong>Workers pull hook activities, not whole FSM transitions.</strong> Each <code>RunOne</code> claims at most one eligible hook from durable storage, executes it and reports the fenced result; the coordinator progresses the transition and commits through the host.</p>
+        <p><strong>Acceptance is not completion.</strong> Wakeups are hints; polling recovers missed wakeups and work after restart. A reconciliation loop scans immediately but exits on error.</p>
+        <p><strong>Triggers are separate.</strong> Typed input, timers, notification work and Continuations have durable mechanisms, but the host schedules their respective reconciliation or workers. The renewal CLI uses a bounded synchronous drive loop, not an always-on daemon.</p>
+        <p class="text-sm muted">Capacity is local to each worker instance. Durable lease claims arbitrate competing workers; this does not establish a global concurrency limit, fairness or multi-node coordinator support.</p>
+      </div>
+    </div>
+    <p class="text-sm"><a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/runtime/reconciliation_loop.go#L10">Reconciliation loop</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/runtime/worker.go#L139">Worker claim</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/examples/renewal/host.go#L585">Renewal drive</a> · <a href="../adr/0007-coordinator-worker-activity-boundary.md">ADR 0007</a>.</p>
+  </section>
+
+  <section id="candidates">
+    <article id="lifecycle" class="card">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">1. Deepen the runtime lifecycle</h2><span class="badge strong">Strong</span><span class="badge explore">in-process composition</span></div>
+      <p class="text-sm"><strong>Files:</strong> <code>runtime/reconciliation_loop.go</code>, <code>runtime/coordinator.go</code>, <code>runtime/commit.go</code>, <code>runtime/worker.go</code>, <code>runtime/continuation_discovery.go</code>, <code>examples/renewal/host.go</code>.</p>
+      <div class="grid2">
+        <div class="visual"><h3 class="font-bold">Before · each host composes progress</h3>
+          <div class="box">Host executable: start, poll, observe errors, stop</div><div class="arrow leak">↓ scheduling and ordering knowledge</div>
+          <div class="box">Execution scan · worker claims · commit scan</div>
+          <div class="box">Continuation discovery · ready intent drive</div>
+          <div class="box">Optional input · timer · notification work</div>
+          <p class="text-sm leak">Omitting one enabled path can strand durable work.</p>
+        </div>
+        <div class="visual"><h3 class="font-bold">After · one runtime lifecycle module</h3>
+          <div class="box">Host supplies machine, stores, domain behavior and configuration</div><div class="seam"></div>
+          <div class="deep"><strong>Managed runtime lifecycle</strong><p class="text-sm">Startup scans · repeated progress · wakeup hints · error visibility · coordinated draining</p></div>
+          <div class="arrow">↓</div><div class="box">Existing coordinator, worker and optional durable paths</div>
+        </div>
+      </div>
+      <p><strong>Problem:</strong> Host code must arrange multiple durable scans and worker calls, recover from loop errors, and shut them down safely; the renewal example demonstrates only a bounded subset.</p>
+      <p><strong>Solution:</strong> Explore a reusable, embeddable lifecycle module that composes the enabled progress paths while leaving domain decisions and persistence with the host.</p>
+      <p><strong>Locality / leverage / tests:</strong> Put scheduling, failure visibility and draining in one place; test durable acceptance before startup, lost wakeup, scan failure, restart, Continuation discovery and shutdown through the lifecycle interface.</p>
+      <p class="text-sm muted"><strong>Deletion test:</strong> Without this composition, each always-on host must rebuild and verify the same progress and shutdown rules. Preserve explicit errors rather than silently abandoning or endlessly masking failed scans.</p>
+      <p class="text-sm"><a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/runtime/reconciliation_loop.go#L29">Immediate scan and loop</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/examples/renewal/host.go#L585">Bounded example</a> · <a href="../fsm-runtime-implementation-contract.md">Continuation contract</a> · <a href="../adr/0007-coordinator-worker-activity-boundary.md">ADR 0007</a>.</p>
+    </article>
+
+    <article id="worker" class="card">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">2. Deepen continuous worker execution</h2><span class="badge explore">Worth exploring</span><span class="badge explore">durable storage adapters</span></div>
+      <p class="text-sm"><strong>Files:</strong> <code>runtime/worker.go</code>, <code>runtime/coordinator.go</code>, <code>adapters/sqlite/activity_worker.go</code>, <code>runtime/worker_shutdown_test.go</code>.</p>
+      <div class="grid2">
+        <div class="visual"><h3 class="font-bold">Before · single-claim primitive</h3>
+          <div class="box">Host repeatedly calls RunOne</div><div class="arrow">↓</div>
+          <div class="box">Claim → start → execute → report</div>
+          <div class="box">Local slots limit one worker instance</div>
+          <p class="text-sm leak">Host determines concurrency, idle waiting and error response.</p>
+        </div>
+        <div class="visual"><h3 class="font-bold">After · worker execution module</h3>
+          <div class="box">Host chooses execution capacity and lifecycle</div><div class="seam"></div>
+          <div class="deep"><strong>Continuous worker execution</strong><p class="text-sm">Repeated claims · bounded local concurrency · idle waiting · health · drain</p></div>
+          <div class="arrow">↓</div><div class="box">Durable claims and fenced reports</div>
+        </div>
+      </div>
+      <p><strong>Problem:</strong> A worker already claims durably and renews leases, but a single call does not keep it alive or supply a host-wide concurrency policy.</p>
+      <p><strong>Solution:</strong> Explore making repeated, bounded worker execution part of the lifecycle module, while retaining the existing single-claim behavior as an implementation building block.</p>
+      <p><strong>Locality / leverage / tests:</strong> Reuse claim-loop and drain behavior across hosts; test independent competing workers, empty queues, capacity saturation, lease expiry, stale reports and deadline-driven shutdown.</p>
+      <p class="text-sm muted"><strong>Deletion test:</strong> Repeated claiming and drain handling move to every host if removed. This is not a proposal for distributed coordination or a global limit; ADR 0007 keeps coordinator progression separate from worker activity leases.</p>
+      <p class="text-sm"><a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/runtime/worker.go#L139">RunOne</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/runtime/worker.go#L340">Shutdown</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/adapters/sqlite/activity_worker.go#L17">SQLite claim</a> · <a href="../adr/0007-coordinator-worker-activity-boundary.md">ADR 0007</a>.</p>
+    </article>
+
+    <article id="ingress" class="card">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">3. Deepen durable trigger ingress</h2><span class="badge explore">Worth exploring</span><span class="badge explore">host ingress adapters</span></div>
+      <p class="text-sm"><strong>Files:</strong> <code>runtime/ingress.go</code>, <code>runtime/acceptance.go</code>, <code>runtime/timer.go</code>, <code>runtime/timer_worker.go</code>, <code>runtime/continuation_driver.go</code>.</p>
+      <div class="grid2">
+        <div class="visual"><h3 class="font-bold">Before · host connects triggers to work</h3>
+          <div class="box">Command / external event / human decision</div>
+          <div class="box">Timer delivery / Continuation driver</div><div class="arrow leak">↓ authorization · identity · replay · scheduling</div>
+          <div class="box">Typed input and transition acceptance</div>
+          <p class="text-sm leak">Durable input does not itself supply a receiver or a running reconciler.</p>
+        </div>
+        <div class="visual"><h3 class="font-bold">After · durable trigger ingress module</h3>
+          <div class="box">Host maps and authorizes domain requests</div><div class="seam"></div>
+          <div class="deep"><strong>Durable trigger ingress</strong><p class="text-sm">Coordinate accepted input, replay and visible delivery progress using existing durable mechanisms</p></div>
+          <div class="arrow">↓</div><div class="box">Typed transition acceptance</div>
+        </div>
+      </div>
+      <p><strong>Problem:</strong> Typed input is persisted and pending input can be reconciled, but the host still connects external reception, handler idempotency, authorization and scheduling; different trigger types do not automatically share one lifecycle.</p>
+      <p><strong>Solution:</strong> Explore reusable ingress composition around the existing durable input and transition mechanisms; decide which real host adapters justify an external seam rather than presupposing an HTTP receiver or broker.</p>
+      <p><strong>Locality / leverage / tests:</strong> Concentrate replay and progress behavior while retaining host authorization and domain mapping; test duplicate and changed payloads, crash after acceptance, handler failure and unauthorized requests.</p>
+      <p class="text-sm muted"><strong>Deletion test:</strong> Without shared ingress composition, each receiving host must arrange durable replay and handler deduplication again. Continuation retains its separate origin-revision fence and policy under ADR 0012; this candidate must not flatten those semantics.</p>
+      <p class="text-sm"><a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/runtime/ingress.go#L14">Input host contract</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/runtime/ingress.go#L92">Submit and reconcile</a> · <a href="../adr/0012-durable-transition-continuation.md">ADR 0012</a> · <a href="../adr/0002-at-least-once-activity-delivery.md">ADR 0002</a>.</p>
+    </article>
+
+    <article id="timers" class="card">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">4. Explore scheduled workload triggers</h2><span class="badge speculative">Speculative</span><span class="badge explore">host domain scheduling</span></div>
+      <p class="text-sm"><strong>Files:</strong> <code>runtime/timer.go</code>, <code>runtime/timer_worker.go</code>, <code>runtime/ingress.go</code>, <code>examples/renewal/host.go</code>.</p>
+      <div class="grid2">
+        <div class="visual"><h3 class="font-bold">Before · durable timer, host-owned meaning</h3>
+          <div class="box">Host schedules an encoded timer</div><div class="arrow">↓</div>
+          <div class="box">Host schedules timer worker</div><div class="arrow">↓</div>
+          <div class="box">Host handles and deduplicates delivery</div>
+          <p class="text-sm leak">A timer is not automatically a periodic renewal or a batch fan-out.</p>
+        </div>
+        <div class="visual"><h3 class="font-bold">After · reusable scheduled-trigger module</h3>
+          <div class="box">Host defines the domain schedule and target</div><div class="seam"></div>
+          <div class="deep"><strong>Scheduled trigger</strong><p class="text-sm">Durable due work · stable occurrence identity · delivery and replay</p></div>
+          <div class="arrow">↓</div><div class="box">Host-authorized transition request</div>
+        </div>
+      </div>
+      <p><strong>Problem:</strong> The existing timer worker must be scheduled by the host and its handler must deduplicate repeated delivery; the renewal demonstration does not wire timers.</p>
+      <p><strong>Solution:</strong> Validate a concrete periodic-start use case before extending timer composition with recurring occurrence semantics; retain host ownership of eligibility, domain records and batch progress.</p>
+      <p><strong>Locality / leverage / tests:</strong> If repeated schedules are needed, centralize occurrence identity and replay; test restart before and after a due time, delayed delivery and duplicate occurrence handling.</p>
+      <p class="text-sm muted"><strong>Deletion test:</strong> The proposed module earns depth only if multiple real workflows otherwise recreate schedule and occurrence recovery; a single host can keep this behavior locally. No exactly-once effect or built-in batch scheduler is implied.</p>
+      <p class="text-sm"><a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/runtime/timer.go#L12">Durable timer</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/runtime/timer_worker.go#L53">Timer worker host contract</a> · <a href="../agents/fsm-runtime.md#one-transition-for-a-batch">Host batch responsibilities</a>.</p>
+    </article>
+  </section>
+
+  <section id="top-recommendation" class="card" style="border-left: 6px solid #059669">
+    <h2 class="text-2xl font-serif font-bold">Top recommendation</h2>
+    <p><a href="#lifecycle"><strong>Deepen the runtime lifecycle</strong></a> first: it makes accepted transition work, worker execution and enabled durable triggers progress in an alive host without each application rebuilding the coordination loop. Explore worker and ingress composition within that context, not as independent promises of new transports or distributed scheduling.</p>
+  </section>
+</main>
+</body>
+</html>

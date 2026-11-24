@@ -12,6 +12,10 @@ Use `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `won
 
 This is a single-context repo with root `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.
 
+### Implementation revisions
+
+Before exploring another repository, verify the requested revision. See `docs/agents/domain.md#implementation-revisions`.
+
 ### FSM and runtime
 
 For host state machines, transitions, continuation, retries, or batch workflows, read `docs/agents/fsm-runtime.md`.
