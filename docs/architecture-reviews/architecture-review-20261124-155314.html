@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture review — rff-go Pub/Sub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { border-style: dashed; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .arrow { color: #64748b; font-size: 1.35rem; line-height: 1; }
+      .box { min-height: 4.1rem; }
+      .diagram { min-height: 19rem; }
+      .flow { background-image: linear-gradient(to right, #e2e8f0 1px, transparent 1px), linear-gradient(to bottom, #e2e8f0 1px, transparent 1px); background-size: 22px 22px; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="mx-auto max-w-6xl space-y-10 px-6 py-12">
+      <header class="space-y-5 border-b border-slate-300 pb-8">
+        <div class="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-700">Architecture review</p>
+            <h1 class="mt-2 font-serif text-4xl">Pub/Sub in rff-go</h1>
+          </div>
+          <p class="text-sm text-slate-500">24 November 2026 · revision <code>63edecf</code></p>
+        </div>
+        <div class="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-600">
+          <span><i class="mr-1 inline-block h-3 w-3 border border-slate-500"></i> module</span>
+          <span><i class="mr-1 inline-block h-3 w-3 border border-dashed border-indigo-600"></i> optional seam</span>
+          <span><i class="mr-1 inline-block h-3 w-3 rounded-sm bg-red-600"></i> transient signal</span>
+          <span><i class="mr-1 inline-block h-3 w-3 bg-slate-800"></i> durable authority</span>
+        </div>
+        <div class="rounded-md border-l-4 border-indigo-600 bg-white px-5 py-4 text-sm leading-6">
+          <strong>Finding:</strong> there is no framework Pub/Sub module at this revision.
+          The framework provides distinct host-configured paths for durable notifications, durable typed inputs,
+          and transient wakeups. <code>NotificationBus</code> is an internal, in-memory invitation channel used by
+          the task-manager fixture.
+        </div>
+        <p class="text-xs text-slate-500">
+          Reviewed an isolated checkout of <code>reinaldoborges/rff-go</code> at
+          <code>63edecf4220f297ac08d6c52b405f386ef5557bd</code> (remote <code>master</code>).
+          The existing local checkout is a different feature branch and was not reviewed.
+        </p>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+        <article id="candidate-scope" class="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-wider text-indigo-700">Candidate 1</p>
+              <h2 class="mt-1 font-serif text-2xl">Keep the fixture bus fixture-only; name the three framework paths</h2>
+            </div>
+            <div class="flex gap-2">
+              <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-900">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">ports &amp; adapters</span>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Files</strong> · <code class="font-mono text-xs">internal/taskmanager/pubsub.go</code>,
+            <code class="font-mono text-xs">notification.go</code>, <code class="font-mono text-xs">drive.go</code>,
+            <code class="font-mono text-xs">runtime/lifecycle_notification.go</code>,
+            <code class="font-mono text-xs">runtime/ingress.go</code>,
+            <code class="font-mono text-xs">runtime/reconciliation_loop.go</code>, <code class="font-mono text-xs">fsm/machine.go</code>,
+            and <code class="font-mono text-xs">docs/architecture.md</code>.</p>
+
+          <div class="grid gap-5 lg:grid-cols-2">
+            <section class="space-y-2">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Before · current naming invites a false equivalence</h3>
+              <div class="diagram flow overflow-auto rounded-lg border border-slate-200 bg-white p-4">
+                <pre class="mermaid">
+flowchart LR
+  F["FSM selection<br/>Notify flag"] --> D["durable intent<br/>and outbox"]
+  D --> W["notification worker"]
+  W --> S["fixture sink"]
+  S --> B["NotificationBus<br/>in-memory, transient"]
+  I["typed InputIngress<br/>durable"]:::separate
+  Q["WakeupQueue<br/>best-effort hint"]:::transient
+  R["reconciliation<br/>durable scans"]:::separate
+  Q -. wakes .-> R
+  classDef durable fill:#172554,color:#fff,stroke:#172554;
+  classDef transient fill:#fee2e2,color:#991b1b,stroke:#dc2626;
+  classDef separate fill:#eef2ff,color:#312e81,stroke:#6366f1;
+  class D,W durable;
+  class B,Q transient;
+                </pre>
+              </div>
+            </section>
+            <section class="space-y-2">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">After · optional host seams, distinct guarantees</h3>
+              <div class="diagram rounded-lg border border-slate-200 bg-white p-4">
+                <div class="grid h-full grid-cols-[1fr_auto_1fr] items-center gap-x-3 gap-y-4">
+                  <div class="box flex items-center justify-center rounded-lg border-2 border-slate-800 bg-slate-800 p-3 text-center text-xs font-semibold text-white">Durable notification intent</div>
+                  <span class="arrow">→</span>
+                  <div class="box flex items-center justify-center rounded-lg border-2 border-dashed border-indigo-600 bg-indigo-50 p-3 text-center text-xs">Optional runtime delivery path<br><span class="font-mono">host adapter</span></div>
+                  <div class="box flex items-center justify-center rounded-lg border border-dashed border-indigo-600 bg-indigo-50 p-3 text-center text-xs">Host command / event / decision</div>
+                  <span class="arrow">→</span>
+                  <div class="box flex items-center justify-center rounded-lg border-2 border-dashed border-indigo-600 bg-indigo-50 p-3 text-center text-xs">Optional durable typed input<br><span class="font-mono">host handler</span></div>
+                  <div class="box flex items-center justify-center rounded-lg border border-red-300 bg-red-50 p-3 text-center text-xs text-red-900">Wakeup hint<br>loss is safe</div>
+                  <span class="arrow">→</span>
+                  <div class="box flex items-center justify-center rounded-lg border border-slate-300 bg-slate-50 p-3 text-center text-xs">Reconciliation reads durable state</div>
+                  <div class="col-span-3 mt-2 rounded border border-dashed border-slate-400 bg-slate-50 p-2 text-center text-[11px] text-slate-600">Fixture-only adapter: InvitationNotification → buffered in-memory subscribers; never the durable source</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-3 text-sm leading-6">
+            <p><strong>Problem</strong><br>The stated general Pub/Sub intent is broader than the implementation: the only bus is fixture-private and outbound-only, while framework inputs, notifications, and wakeups have separate contracts.</p>
+            <p><strong>Solution</strong><br>Keep the bus internal to the fixture and describe the framework as three optional, host-configured paths; defer a general Pub/Sub module until a concrete shared use case exists.</p>
+            <div><strong>Benefits</strong><ul class="mt-1 list-disc pl-5 text-slate-700">
+              <li>locality: durable guarantees stay with runtime</li>
+              <li>leverage: hosts opt into only needed paths</li>
+              <li>tests cover replay, ingress, and wakeups separately</li>
+            </ul></div>
+          </div>
+          <div class="rounded-md border border-indigo-100 bg-indigo-50 px-4 py-3 text-xs leading-5 text-indigo-950">
+            <strong>Evidence:</strong> <code>NotificationBus</code> explicitly calls itself transient fixture storage;
+            <code>SetNotificationSink</code> injects its delivery callback. <code>Drive</code> reconciles the durable
+            outbox before publishing. Tests cover no-subscriber failure, backpressure, and delivery after restart.
+            Separately, lifecycle notification setup is explicit before start, typed inputs are durable, and wakeups
+            are documented as hints only.
+          </div>
+          <p class="text-xs text-slate-500"><strong>ADR fit:</strong> consistent with ADR-0001, ADR-0004, ADR-0007,
+            ADR-0012, and the architecture doc: host-owned persistence, durable notification intent, and recoverable
+            transient wakeups remain distinct.</p>
+        </article>
+
+        <article id="candidate-composition" class="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-wider text-indigo-700">Candidate 2</p>
+              <h2 class="mt-1 font-serif text-2xl">Deepen host composition only after a real second adapter appears</h2>
+            </div>
+            <div class="flex gap-2">
+              <span class="rounded-full bg-slate-200 px-3 py-1 text-xs font-bold text-slate-800">Speculative</span>
+              <span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">ports &amp; adapters</span>
+            </div>
+          </div>
+          <p class="text-sm"><strong>Files</strong> · <code class="font-mono text-xs">runtime/lifecycle.go</code>,
+            <code class="font-mono text-xs">runtime/lifecycle_notification.go</code>,
+            <code class="font-mono text-xs">runtime/lifecycle_input.go</code>, and future host integration code.</p>
+
+          <div class="grid gap-5 lg:grid-cols-2">
+            <section class="space-y-2">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">Before · separate setup is explicit</h3>
+              <div class="diagram flow flex flex-col justify-center gap-3 rounded-lg border border-slate-200 p-5">
+                <div class="grid grid-cols-2 gap-3">
+                  <div class="box rounded-lg border border-slate-400 bg-white p-3 text-center text-xs">Host configures typed input paths</div>
+                  <div class="box rounded-lg border border-slate-400 bg-white p-3 text-center text-xs">Host enables durable notification workers</div>
+                </div>
+                <div class="mx-auto text-xl text-slate-400">↓</div>
+                <div class="deep rounded-lg p-4 text-center text-xs font-semibold text-white">Optional Lifecycle instance<br><span class="font-normal text-slate-300">durable state remains authoritative</span></div>
+                <p class="text-center text-[11px] text-slate-500">No general broker adapter or multi-node coordinator in this revision.</p>
+              </div>
+            </section>
+            <section class="space-y-2">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500">After · only when usage proves the seam</h3>
+              <div class="diagram flex flex-col justify-center gap-3 rounded-lg border border-dashed border-indigo-300 bg-indigo-50/50 p-5">
+                <div class="rounded-lg border-2 border-dashed border-indigo-600 bg-white p-3 text-center text-xs font-semibold">Host-owned per-instance composition</div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div class="box rounded-lg border border-slate-300 bg-white p-3 text-center text-xs">Durable typed input adapter<br><span class="text-slate-500">adapter 1 + adapter 2</span></div>
+                  <div class="box rounded-lg border border-slate-300 bg-white p-3 text-center text-xs">Notification delivery adapter<br><span class="text-slate-500">adapter 1 + adapter 2</span></div>
+                </div>
+                <div class="text-center text-[11px] text-slate-600">Separate guarantees; shared setup only if repeated across real hosts</div>
+              </div>
+            </section>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-3 text-sm leading-6">
+            <p><strong>Problem</strong><br>The desired future coordination spans several distinct guarantees; a single Pub/Sub seam today would be hypothetical and could blur durable inputs, notifications, and transient hints.</p>
+            <p><strong>Solution</strong><br>If multiple hosts repeat the same setup, deepen a host-owned composition module around the existing typed paths; require concrete adapters before extracting shared behavior.</p>
+            <div><strong>Benefits</strong><ul class="mt-1 list-disc pl-5 text-slate-700">
+              <li>locality: configuration changes stay per host</li>
+              <li>leverage: repeated setup is paid once</li>
+              <li>tests exercise real adapters through one seam</li>
+            </ul></div>
+          </div>
+          <div class="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-950">
+            <strong>Constraint:</strong> one adapter means a hypothetical seam. The current bus is an internal fixture
+            adapter; no production broker or cross-node coordination adapter is present. The architecture doc defers
+            multi-node coordination, so this is not a recommendation to build the module now.
+          </div>
+        </article>
+      </section>
+
+      <section id="top-recommendation" class="rounded-xl bg-slate-900 p-7 text-white">
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-300">Top recommendation</p>
+        <h2 class="mt-2 font-serif text-2xl">Candidate 1 · Keep the fixture bus fixture-only</h2>
+        <p class="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
+          This matches the code and existing ADRs today: the host can opt into durable notifications, durable inputs,
+          and transient wakeups independently, while the task-manager bus remains a test delivery adapter. It preserves
+          locality and avoids inventing a broad seam before another adapter or concrete coordination use case exists.
+        </p>
+        <a class="mt-4 inline-block text-sm font-semibold text-indigo-300 underline underline-offset-4" href="#candidate-scope">View candidate 1 ↑</a>
+      </section>
+    </main>
+  </body>
+</html>
