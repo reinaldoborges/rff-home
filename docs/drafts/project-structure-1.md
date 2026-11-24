@@ -2,6 +2,10 @@
 
 Working name: **RF-DSF (RF Distributed Systems Framework)**. This tree describes logical areas. See [the architecture baseline](../architecture.md) for the agreed initial repository and Go package boundaries, scope, and deferred decisions.
 
+This is a historical draft. In particular, SQLite and MySQL adapters and an
+optional embedded lifecycle are now implemented; consult the baseline and
+[FSM/runtime guide](../agents/fsm-runtime.md) for current status and boundaries.
+
 - **Framework**
   - Domain modeling: optional Go-native patterns for types, invariants, validation, and transitions; no mandatory DDD layering or ORM.
   - Persistence: optional application-owned ports and patterns; applications own domain data and choose its store.

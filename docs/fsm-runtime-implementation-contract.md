@@ -24,9 +24,12 @@ contract, not a production-readiness claim.
 - Hooks and downstream effects are at-least-once. Runtime fencing rejects stale
   reports; it does not stop an external call. No exactly-once external effect
   or automatic undo of a previously committed state is promised.
-- Durable polling is required even if wakeups exist. The host schedules
-  reconciliation, observes errors, and authorizes inspection and controls.
-  Persist safe diagnostics, never secrets or raw errors.
+- Durable polling is required even if wakeups exist. The host enables the
+  applicable embedded lifecycle paths or schedules lower-level reconciliation
+  itself, schedules any required scans outside the lifecycle, observes
+  errors, and authorizes inspection and controls. Persist safe diagnostics,
+  never secrets or raw errors. See the
+  [lifecycle guide](agents/fsm-runtime.md#run-workers-and-accept-inputs).
 
 ## Continuation
 

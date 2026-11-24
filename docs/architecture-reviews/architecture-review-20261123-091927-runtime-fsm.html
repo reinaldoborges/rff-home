@@ -36,6 +36,7 @@
     <p class="text-xs uppercase tracking-widest text-emerald-700 font-bold">RF-DSF · Architecture review · 23 November 2026</p>
     <h1 class="text-4xl font-serif font-bold">Runtime + state machine coordination</h1>
     <p class="muted">Implementation examined: <a href="https://github.com/reinaldoborges/rff-go/tree/2ec2fc330c163b621113e253136f74e81debef5b">rff-go at 2ec2fc3</a>. Experimental first slice; not a production-readiness claim.</p>
+    <p class="text-sm"><strong>Status update · 24 November 2026:</strong> The verdicts and recommendations below describe the original review. Status notes reflect <a href="https://github.com/reinaldoborges/rff-go/tree/63edecf4220f297ac08d6c52b405f386ef5557bd">Go master at 63edecf</a>, including <a href="https://github.com/reinaldoborges/rff-go/pull/5">rff-go#5</a> and <a href="https://github.com/reinaldoborges/rff-go/pull/6">rff-go#6</a>.</p>
     <p class="text-sm muted">Legend: outlined box = module · dashed line = seam · red text = knowledge leaking to host · dark box = proposed deep module.</p>
   </header>
 
@@ -51,12 +52,14 @@
         <tr><td><strong>One entity per record</strong><br><span class="badge explore">Possible, host-managed</span></td><td>Reuse a machine definition for distinct entity IDs; each entity can have its own transition execution and retry history.</td><td>Durable discovery/fan-out, stable per-record identities, concurrency limits, and aggregation. No native batch lifecycle is established by these contracts.</td></tr>
       </tbody>
     </table>
+    <p class="text-sm"><strong>Current scenario status:</strong> Optional durable Continuation now advances opted-in states after commit, and an embedded lifecycle can schedule enabled progress paths. Manual ingress and business authorization remain host-owned. Both batch patterns have runnable host examples; membership, per-record progress, fan-out and aggregation remain host responsibilities.</p>
     <p class="text-sm muted">Evidence: <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/fsm/machine.go#L32-L105">machine definition and hooks</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/record.go#L70-L104">per-entity execution</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/acceptance.go#L49-L67">active reservation</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/runtime/ingress.go#L13-L29">typed inputs</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/2ec2fc330c163b621113e253136f74e81debef5b/README.md#L32-L85">host scheduling and timer limitations</a>.</p>
   </section>
 
   <section id="candidates">
     <article id="continuation" class="card">
       <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">1. Deepen transition continuation</h2><span class="badge strong">Strong</span><span class="badge explore">host persistence adapters</span></div>
+      <p class="text-sm"><strong>Status: implemented.</strong> Opted-in Continuations durably discover and drive fenced successor requests, with their own policy and operator controls. The optional lifecycle can schedule discovery and driving; separate stores still require host-provided replayable commit markers and revision fencing. See <a href="../adr/0012-durable-transition-continuation.md">ADR 0012</a> and <a href="https://github.com/reinaldoborges/rff-go/pull/5">rff-go#5</a>.</p>
       <p class="text-sm"><strong>Files:</strong> <code>runtime/acceptance.go</code>, <code>runtime/ingress.go</code>, <code>runtime/commit.go</code>, <code>runtime/notification.go</code>, <code>adapters/sqlite/atomic_commit.go</code>; <code>docs/architecture.md</code>.</p>
       <div class="grid2">
         <div class="visual"><h3 class="font-bold">Before · host pieces together continuation</h3>
@@ -80,6 +83,7 @@
 
     <article id="effects" class="card">
       <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">2. Deepen the side-effect recovery seam</h2><span class="badge strong">Strong</span><span class="badge explore">external adapters</span></div>
+      <p class="text-sm"><strong>Status: partially addressed.</strong> Optional tracked operations persist identities and confirmed results, reconcile unknown outcomes, and support host-defined compensation. Hosts still own downstream adapters, cross-execution deduplication and safe external effects; tracking does not guarantee exactly-once calls. See <a href="../adr/0013-track-downstream-operations-within-transitions.md">ADR 0013</a> and <a href="https://github.com/reinaldoborges/rff-go/pull/5">rff-go#5</a>.</p>
       <p class="text-sm"><strong>Files:</strong> <code>fsm/machine.go</code>, <code>fsm/execution.go</code>, <code>runtime/hook_runner.go</code>, <code>runtime/coordinator.go</code>, <code>runtime/worker.go</code>.</p>
       <div class="grid2">
         <div class="visual"><h3 class="font-bold">Before · one hook covers many effects</h3>
@@ -107,6 +111,7 @@ flowchart LR
 
     <article id="batch" class="card">
       <div class="flex flex-wrap items-center gap-3"><h2 class="text-2xl font-serif font-bold">3. Deepen batch orchestration only when needed</h2><span class="badge explore">Worth exploring</span><span class="badge explore">host-owned module</span></div>
+      <p class="text-sm"><strong>Status: host examples implemented; no framework batch scheduler.</strong> The <a href="https://github.com/reinaldoborges/rff-go/tree/63edecf4220f297ac08d6c52b405f386ef5557bd/examples/renewal">renewal example</a> exercises batch-entity progress and per-record fan-out, including restart recovery. Enumeration, record claims, progress and aggregation remain host-owned.</p>
       <p class="text-sm"><strong>Files:</strong> <code>runtime/record.go</code>, <code>runtime/acceptance.go</code>, <code>runtime/coordinator.go</code>, <code>runtime/timer.go</code>, <code>internal/taskmanager/task_runtime.go</code>.</p>
       <div class="grid2">
         <div class="visual"><h3 class="font-bold">Before · two possible host designs</h3>
@@ -131,6 +136,7 @@ flowchart LR
 
   <section id="top-recommendation" class="card" style="border-left: 6px solid #059669">
     <h2 class="text-2xl font-serif font-bold">Top recommendation</h2>
+    <p class="text-sm"><strong>Status:</strong> The Continuation recommendation was implemented; the following is the original recommendation, retained for context.</p>
     <p><a href="#continuation"><strong>Transition continuation</strong></a> first: it connects successful state work to the next requested transition without losing progress between commit and the next request, and is shared by automatic multi-step and batch workflows.</p>
   </section>
 </main>

@@ -39,6 +39,7 @@
       <header class="space-y-4 border-b border-stone-300 pb-8">
         <p class="text-xs uppercase tracking-[0.2em] text-slate-500">Architecture review · 23 Nov 2026</p>
         <h1 class="font-serif text-4xl tracking-tight">rff-go · FSM isolation</h1>
+        <p class="text-sm text-slate-600"><strong>Status update · 24 November 2026:</strong> The original review is retained below. At <a class="underline" href="https://github.com/reinaldoborges/rff-go/tree/63edecf4220f297ac08d6c52b405f386ef5557bd">Go master 63edecf</a>, Continuation behavior is declared in the FSM while durable coordination remains in the optional runtime; the FSM/runtime split remains in place.</p>
         <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-600">
           <span><b class="text-slate-900">□</b> module</span>
           <span><b class="text-slate-900">┄</b> seam</span>
@@ -59,6 +60,7 @@
               <span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">in-process</span>
             </div>
           </div>
+          <p class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950"><strong>Status: preserved.</strong> <a class="underline" href="https://github.com/reinaldoborges/rff-go/pull/5">rff-go#5</a> adds Continuation configuration and direct FSM tests without moving durable execution into the FSM; <a class="underline" href="https://github.com/reinaldoborges/rff-go/pull/6">rff-go#6</a> adds the optional runtime lifecycle.</p>
           <p class="font-mono text-sm text-slate-600">
             fsm/machine.go · fsm/machine_test.go · fsm/selection_test.go · fsm/hooks_test.go ·
             examples/fsm/main.go · internal/taskmanager/fixture.go · internal/taskmanager/task_runtime.go ·

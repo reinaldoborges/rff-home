@@ -18,7 +18,7 @@ Before exploring another repository, verify the requested revision. See `docs/ag
 
 ### FSM and runtime
 
-For host state machines, transitions, continuation, retries, or batch workflows, read `docs/agents/fsm-runtime.md`.
+For host state machines, transitions, continuation, retries, lifecycle, ingress, or batch workflows, read `docs/agents/fsm-runtime.md`.
 
 ### Architecture reports
 
