@@ -1,11 +1,18 @@
 # Continuation and downstream-operation implementation contract
 
-This contract specifies the planned runtime facilities in
+This contract specifies the runtime facilities in
 [ADR 0012](adr/0012-durable-transition-continuation.md) and
-[ADR 0013](adr/0013-track-downstream-operations-within-transitions.md). Neither
-facility is implemented yet. For host usage scenarios, read the
-[FSM/runtime guide](agents/fsm-runtime.md). The linked decision comments record
-the tradeoffs; this document is the revision-pinned implementation contract.
+[ADR 0013](adr/0013-track-downstream-operations-within-transitions.md). The
+experimental Go implementation was merged in
+[rff-go#5](https://github.com/reinaldoborges/rff-go/pull/5) at
+[`fc58b4c`](https://github.com/reinaldoborges/rff-go/tree/fc58b4ce103caf5e282f84db6755db66ba4a5378).
+For host usage scenarios, read the [FSM/runtime guide](agents/fsm-runtime.md);
+for executable checks, see the Go
+[conformance guide](https://github.com/reinaldoborges/rff-go/blob/fc58b4ce103caf5e282f84db6755db66ba4a5378/docs/testing-runtime-conformance.md).
+Go CI passed; the separate local MySQL 8.4 gate also passed, including
+non-skipped host and batch process-restart tests. MySQL is not covered by Go CI.
+The linked decision comments record the tradeoffs; this is the implementation
+contract, not a production-readiness claim.
 
 ## Boundaries
 

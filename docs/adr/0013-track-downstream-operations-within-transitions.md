@@ -1,6 +1,6 @@
 # Track downstream operations within transition executions
 
-The optional runtime will support host-selected, durable tracking of Downstream
+The optional runtime supports host-selected, durable tracking of Downstream
 operations within their authoritative transition execution. This includes
 selected reads whose results must remain stable, mutations, and compensation;
 untracked calls remain host-managed. The host defines the operations,
@@ -40,9 +40,10 @@ when they are unavailable, and re-check downstream idempotency guarantees
 rather than assuming they remain valid. Authorized pre-work-success execution
 migration must preserve operation identities, outcomes, and their meaning, or
 be blocked. Retain operation identities and replay evidence with transition
-history; host-owned references must remain available for replay. This decision
-describes intended behavior, not an implemented tracking facility, and does
-not promise exactly-once external effects.
+history; host-owned references must remain available for replay. The
+experimental Go implementation is available in
+[rff-go#5](https://github.com/reinaldoborges/rff-go/pull/5); it does not promise
+exactly-once external effects.
 
 For the detailed implementation contract, see
 [Continuation and downstream-operation implementation contract](../fsm-runtime-implementation-contract.md).

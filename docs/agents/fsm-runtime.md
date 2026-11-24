@@ -6,11 +6,12 @@ the [Go implementation README](https://github.com/reinaldoborges/rff-go/blob/mas
 documents the current implementation and host wiring. The Go framework is
 experimental; passing the first-slice gate is not a production-readiness claim.
 
-**Status:** Manual transition requests and the durable transition runtime are
-available. Runtime-managed automatic Continuation and Downstream operation
-tracking are approved designs, **not implemented**. Do not call them as
-existing facilities. See the [implementation contract](../fsm-runtime-implementation-contract.md)
-and its linked ADRs when implementing those features.
+**Status:** Manual transitions, durable Continuation, and optional Downstream
+operation tracking are implemented in the experimental Go runtime. The host
+must schedule reconciliation and supply domain persistence, authorization,
+policies, and downstream adapters. See the
+[implementation contract](../fsm-runtime-implementation-contract.md) for the
+full safety and persistence requirements.
 
 ## Choose the execution model
 
@@ -61,24 +62,25 @@ re-running successful work. See [ADR 0004](../adr/0004-host-supplied-transition-
 
 ## Advance the workflow
 
-- **Explicit request or human decision, available now:** After the prior
+- **Explicit request or human decision:** After the prior
   execution has completed and released its reservation, submit the next event
   with a stable idempotency key. For a human wait, commit a meaningful waiting
   state, then use typed human-decision ingress when the user responds. The host
   authorizes and maps that input to a transition; the runtime does not provide a
   UI or receiver.
-- **Automatic progression, available now only with host orchestration:** The
-  host must durably discover the committed milestone, decide and persist the
-  next request, and reconcile delivery using the same key. Account for crashes,
-  a still-held reservation, changed domain state, and duplicate or unknown
-  acceptance. A call from the target hook is too early: the target has not yet
-  committed and the entity is reserved. A transient wakeup alone is not durable.
-- **Runtime-managed Continuation, planned:** Opt in per committed state;
-  host-owned, version-pinned behavior makes the decision after commit. The
-  intended contract covers durable discovery, stale-origin checks, replay,
-  authorization, separate budgets, and operator controls. Follow
-  [ADR 0012](../adr/0012-durable-transition-continuation.md) rather than
-  assuming this machinery exists today.
+- **Runtime-managed Continuation:** Opt in per committed state and supply
+  version-pinned, side-effect-free behavior and a separate explicit policy.
+  Schedule durable discovery and the driver; provide commit markers for
+  separate stores and a host acceptance fence that detects changed revisions,
+  including A-to-B-to-A. The runtime reconciles unknown acceptance and supports
+  authorized retry or waiver. Its own attempt budget and active-time deadline
+  pause during recorded reservation waits. A call from the target hook is too
+  early: its target is not yet committed and the entity is reserved. A transient
+  wakeup alone is not durable. See [ADR 0012](../adr/0012-durable-transition-continuation.md)
+  and the [runnable renewal example](https://github.com/reinaldoborges/rff-go/tree/master/examples/renewal).
+- **Host-managed progression:** The host may instead durably discover the
+  committed milestone, persist a stable next request, and reconcile delivery
+  itself, including reservation waits and unknown acceptance.
 
 ## Set a policy for each transition
 
@@ -146,20 +148,24 @@ waiver, not transition abort. For phase gates and unknown attempts, read the
 
 ## Downstream calls
 
-- **Available now:** Hook delivery is at least once. Make downstream effects
+- **Untracked calls:** Hook delivery is at least once. Make downstream effects
   idempotent using stable identities, and store any needed per-operation
   receipts or checkpoints in host-owned durable storage. A timeout or crash
   may leave the outcome unknown; reconcile with the downstream system before
   repeating an unsafe call. If no safe reconciliation or repeat is possible,
   surface the uncertainty for intervention. Leases fence runtime reports, not
   external systems.
-- **Planned optional tracking:** The runtime will track host-selected operations
-  within a transition execution, including selected reads and compensation.
-  It will preserve operation identity and safe results, handle unknown
-  outcomes, and retain host-defined recovery decisions. This is not a
-  general-purpose activity lifecycle or an exactly-once guarantee. Read
+- **Optional tracking:** Call `runtime.TrackOperation` from an active hook
+  using a stable key and host-supplied behavior, comparison, result codecs,
+  and provider evidence. The runtime persists intent and confirmed results;
+  a repeat of an unknown effect requires definitive reconciliation or a
+  verified provider guarantee covering possible late calls. A confirmed
+  success with an unavailable required result blocks progression. Declare
+  compensation prerequisites and use a distinct key; operator resolution and
+  retry or abort are separate authorized actions. Tracking is not a
+  general-purpose activity lifecycle or an exactly-once guarantee. See
   [ADR 0013](../adr/0013-track-downstream-operations-within-transitions.md)
-  before designing against it.
+  and the [Go host wiring](https://github.com/reinaldoborges/rff-go/blob/master/README.md#transition-acceptance).
 
 ## One transition for a batch
 
@@ -183,3 +189,6 @@ to process many records:
 Alternatively, give each record an entity and independent transition
 execution; the host still owns durable fan-out and batch aggregation. Neither
 approach supplies a built-in batch lifecycle or exactly-once external effects.
+The [renewal example](https://github.com/reinaldoborges/rff-go/tree/master/examples/renewal)
+and its [conformance checks](https://github.com/reinaldoborges/rff-go/blob/master/docs/testing-runtime-conformance.md)
+exercise both patterns with SQLite and MySQL.

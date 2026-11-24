@@ -1,6 +1,6 @@
 # Make automatic continuation durable after commit
 
-The optional runtime will coordinate durable Continuations for states explicitly
+The optional runtime coordinates durable Continuations for states explicitly
 opted in by the host, including initial states. After a successful domain
 commit, the host decides whether to request a subsequent transition. This
 decision is side-effect-free, may inspect durable domain data, and can be
@@ -37,8 +37,8 @@ is no framework-wide automatic-chain length limit.
 
 Human decisions continue through existing typed ingress after the application
 commits a meaningful waiting state, rather than holding a transition execution
-open. This decision describes intended behavior, not an implemented
-Continuation facility.
+open. The experimental Go implementation is available in
+[rff-go#5](https://github.com/reinaldoborges/rff-go/pull/5).
 
 For the detailed implementation contract, see
 [Continuation and downstream-operation implementation contract](../fsm-runtime-implementation-contract.md).
