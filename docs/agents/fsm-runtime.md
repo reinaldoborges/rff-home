@@ -18,7 +18,9 @@ full safety and persistence requirements.
 1. Define application-owned entity IDs, states, events, inputs, and a versioned
    machine. Keep selectors and guards pure; define a target-state handler for
    each state and classify failures using safe data. Initialization selects an
-   initial state separately, without a synthetic event.
+   initial state separately, without a synthetic event. A one-state machine is
+   valid; terminal states are optional. Model reopening explicitly if a terminal
+   state needs an outgoing transition.
 2. Use the FSM alone for deterministic selection when the host will execute
    work, persist state, and handle recovery itself. The machine selects; it
    does not run hooks or commit state. See the
@@ -55,11 +57,63 @@ sequenceDiagram
     R-->>H: Inspect progress and committed outcome
 ```
 
+Hooks receive an immutable execution context with entity identity, source and
+target, accepted input, idempotency key, and attempt metadata. Initialization
+has no source or event. Retry and recovery hooks also receive the persisted
+safe failure envelope.
+
 Acceptance means the execution was recorded, **not** that the new state was
 committed. Only one transition execution may be active per entity; a different
 request while reserved is busy. The host commit checks the expected state and
 fence. If stores are separate, reconcile its durable receipt rather than
 re-running successful work. See [ADR 0004](../adr/0004-host-supplied-transition-persistence.md).
+
+## Inspect transition execution
+
+The execution status is separate from the committed domain state:
+
+| Status | Meaning |
+| --- | --- |
+| `Waiting` | Accepted work is waiting to run or retry. |
+| `Running` | Transition work or its commit is in progress. |
+| `Notifying` | The target is committed and notification intent is being handed off. |
+| `NotificationRepair` | The target is committed, but handoff needs retry or an authorized waiver. |
+| `NeedsIntervention` | Pre-commit work or recovery needs an authorized decision; the reservation remains held. |
+| `CommitRejected` | The host durably rejected the commit; automatic recovery follows with the reservation held. |
+| `Aborting` | Recovery for an abort or definitive rejection is in progress. |
+| `Complete` | The execution is settled after commit and any required notification handoff. |
+| `Aborted` | Recovery completed without this execution committing its target; external effects may remain. |
+
+Attempts, errors, retry counters, and lease ownership are execution metadata,
+not domain states. Post-acceptance failures are recorded on the execution;
+acceptance alone does not report the eventual outcome.
+
+The following is a protocol overview, not an exhaustive transition map:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Waiting: transition accepted
+    Waiting --> Running: attempt starts
+    Running --> Waiting: app policy authorizes retry
+    Running --> Notifying: work succeeds, state committed, notification enabled
+    Running --> Complete: work succeeds, state committed, notification disabled
+    Notifying --> Complete: notification intent durably handed off
+    Notifying --> Notifying: outbox handoff retry
+    Notifying --> NotificationRepair: handoff requires a decision
+    NotificationRepair --> Notifying: authorized handoff retry
+    NotificationRepair --> Complete: authorized waiver durably recorded
+    Running --> NeedsIntervention: policy exhausted or requires a decision
+    Running --> CommitRejected: host records definitive commit rejection
+    CommitRejected --> Aborting: definitive rejection authorizes recovery
+    Waiting --> NeedsIntervention: deadline policy requires a decision
+    NeedsIntervention --> Waiting: authorized retry of same transition
+    NeedsIntervention --> Aborting: explicit pre-commit abort
+    NeedsIntervention --> Aborting: authorized retry of recovery
+    Aborting --> NeedsIntervention: recovery policy exhausted or deadline elapsed
+    Aborting --> Aborted: recovery outcome durably recorded
+    Complete --> [*]
+    Aborted --> [*]
+```
 
 ## Advance the workflow
 
