@@ -1,11 +1,8 @@
 # Durable work identifier constraints
 
-**Status: incomplete — MySQL manual could not be retrieved.** This note records
-verified implementation and SQLite evidence, and additional MySQL 8.4 source
-and test evidence, but it does not establish all MySQL database guarantees.
-Keep issue [#65
-open](https://github.com/reinaldoborges/rff-home/issues/65); do not use this as
-approval to shorten identifiers or change their equality semantics.
+**Status: research complete**, with a documented MySQL manual inconsistency
+about BLOB sorting. This is evidence for [issue #65](https://github.com/reinaldoborges/rff-home/issues/65),
+not approval to shorten identifiers or change their equality semantics.
 
 ## Revision and scope
 
@@ -14,7 +11,9 @@ The map pins `reinaldoborges/rff-go` to
 still resolved to that exact commit. The ordinary checkout was clean but on
 `docs/effective-go-guidance` at `881c69249c751637bf7ae4b1755951707f758d75`;
 it was not inspected or changed. Source references below point to the exact
-pinned commit.
+pinned commit. On the final retry the remote master and checkout were
+reverified unchanged, and the pinned commit was inspected in a clean detached
+isolated worktree.
 
 ## What the application persists and means by an ID
 
@@ -81,6 +80,74 @@ constraint against out-of-band writers or malformed existing rows. See
 [hook upsert logic](https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/activity.go#L290-L309),
 and [notification creation](https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/notification_outbox.go#L120-L153).
 
+## MySQL 8.4 manual: value and index semantics
+
+- [`LONGBLOB` holds at most 4,294,967,295 bytes](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/string-type-syntax.html);
+  actual usable values depend on packet and memory limits. InnoDB additionally
+  requires the [total row including BLOBs to be less than 4 GB](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/innodb-limits.html).
+  Outside strict SQL mode, overlong values may be truncated with a warning;
+  strict mode can reject truncation instead. These are storage/transport and
+  configuration limits, **not an application contract to truncate IDs**:
+  [BLOB and TEXT](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/blob.html).
+- A BLOB is a binary byte string: comparison and sort use numeric byte values,
+  all bytes including trailing spaces matter for comparison, and no bytes are
+  stripped on retrieval. Binary columns do not apply character-set conversion
+  in the documented column-assignment and retrieval cases. See
+  [BLOB and TEXT](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/blob.html)
+  and [binary versus `_bin` collations](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/charset-binary-collations.html).
+- `INDEX(id(256))` on a BLOB indexes the **first 256 bytes**, not 256 Unicode
+  characters; BLOB indexes must specify a prefix length. If the search term
+  exceeds the index prefix, the manual says the index excludes nonmatches and
+  remaining rows are examined for possible matches. Therefore a shared prefix
+  produces candidates, not an equality of distinct full values: full-column
+  `WHERE id = ?` retains its comparison, while the index may narrow candidates.
+  An index need not be chosen at all. See [column indexes and prefixes](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/column-indexes.html#column-indexes-prefix)
+  and [binary comparison rules](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/charset-binary-collations.html#charset-binary-collations-trailing-space-comparisons).
+- The current prefix keys are **non-unique** and admit both identical IDs and
+  distinct IDs with the same prefix at the schema level. A hypothetical
+  `UNIQUE(id(256))` would require values to be unique **within the prefix**:
+  it rejects two distinct longer IDs with that same prefix, not merely exact
+  duplicates. It is not equivalent to unrestricted full-value uniqueness.
+  See [CREATE INDEX: unique indexes](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/create-index.html#create-index-unique).
+- InnoDB's documented index key prefix limits are 767 bytes for COMPACT or
+  REDUNDANT rows, and 3072 for DYNAMIC or COMPRESSED at the default 16 KB page
+  size; smaller 8 KB and 4 KB pages reduce the latter maximum to 1536 and 768
+  bytes. Limits also apply to full-column index keys. A bounded full-value key
+  thus needs an explicitly justified bound, row-format/page-size support,
+  encoding and full equality semantics; a digest or prefix alone is not a
+  collision-free identity. See [InnoDB limits](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/innodb-limits.html).
+
+## MySQL 8.4 manual: ordering and a documentation conflict
+
+- The [ORDER BY optimization manual](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/order-by-optimization.html)
+  explicitly says an index on only a column prefix cannot fully resolve
+  `ORDER BY` on that column: the index cannot distinguish the suffix and a
+  filesort is needed. A prefix index may still help find rows. Other indexes
+  or query shapes may enable ordering, but actual plan selection depends on
+  cost, additional columns read, join order and predicates; adding an index
+  does not guarantee its use or imply a particular latency.
+- [LIMIT optimization](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/limit-optimization.html)
+  says rows with identical ORDER BY values may be returned in any order and
+  plan changes, including `LIMIT`, may change their relative order. In these
+  adapters, [hook](https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/activity_worker.go#L33-L70)
+  and [notification](https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/notification_outbox.go#L207-L255)
+  claims take the first eligible item in the SQL scan; [timers](https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/timer.go#L103-L124)
+  use scan order only for equal earliest deadlines, and [input discovery](https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/ingress.go#L103-L130)
+  preserves scan order. A rewrite must deliberately preserve the observable
+  selection rules rather than sort by a hash or prefix and assume equivalence.
+- **Conflicting official text:** the 8.4 [BLOB/TEXT page](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/blob.html)
+  states only the first `max_sort_length` bytes of a BLOB/TEXT column are used
+  when sorting. The 8.4 [`max_sort_length` variable description](https://docs.oracle.com/cd/E17952_01/mysql-8.4-en/server-system-variables.html#sysvar_max_sort_length)
+  instead restricts that truncation to strings using **PAD SPACE** collations,
+  default 1024 bytes; it says this changed from previous versions. The
+  first-party 8.4 source and BLOB regression test below support the latter
+  distinction at the inspected snapshot. Do **not** resolve this inconsistency
+  by asserting either a universal 1024-byte BLOB cutoff or universal unlimited
+  full-ID ordering for all supported server versions and plans. Establish the
+  actual target-version behavior with a regression case using long shared
+  prefixes and, if exact deterministic tie ordering is required, define and
+  verify it explicitly.
+
 ## Verified SQLite constraints and ordering
 
 - SQLite's documented default maximum length for a string or BLOB is 1,000,000,000
@@ -112,11 +179,13 @@ and [notification creation](https://github.com/reinaldoborges/rff-go/blob/4ce0e7
 ## MySQL source evidence from the retry
 
 On the follow-up, the Oracle and MySQL documentation sites still returned HTTP
-403. As a different first-party source, the public `mysql/mysql-server` 8.4
+403; the Oracle-hosted manual became accessible on the final retry. As a
+different first-party source, the public `mysql/mysql-server` 8.4
 branch was read at commit
 [`14f6f5119f993f74a8514352108d9337182d5be5`](https://github.com/mysql/mysql-server/commit/14f6f5119f993f74a8514352108d9337182d5be5).
 This is an implementation snapshot, not an authoritative manual guarantee
-for every 8.4 release or server supported by the adapter.
+for every 8.4 release or server supported by the adapter, which [accepts
+MySQL 8.4 or later](https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/mysql.go#L58-L82).
 
 - In that snapshot, [`max_sort_length` is described](https://github.com/mysql/mysql-server/blob/14f6f5119f993f74a8514352108d9337182d5be5/sql/sys_vars.cc#L2957-L2963)
   as the bytes used for long values **with PAD SPACE collations**, with default
@@ -144,36 +213,14 @@ for every 8.4 release or server supported by the adapter.
   BLOB prefix key alone as the full-column sort key; it does not establish the
   chosen access path for the application's joined queries or a latency result.
 
-## MySQL documentation gap — blocks a decision
-
-On 2026-11-26 and the follow-up, requests to the official MySQL 8.4 manual
-returned HTTP 403 in this environment (both `dev.mysql.com` and the
-Oracle-hosted manual). I did not
-work around that restriction. The relevant primary-source pages that still
-need review are:
-
-- [Column prefix indexes](https://dev.mysql.com/doc/refman/8.4/en/column-indexes.html)
-- [BLOB and TEXT types](https://dev.mysql.com/doc/refman/8.4/en/blob.html)
-- [ORDER BY optimization](https://dev.mysql.com/doc/refman/8.4/en/order-by-optimization.html)
-- [Sorting rows](https://dev.mysql.com/doc/refman/8.4/en/sorting-rows.html)
-- [InnoDB limits](https://dev.mysql.com/doc/refman/8.4/en/innodb-limits.html)
-- [Server system variables, including sort-related limits](https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html)
-
-Accordingly, this research does **not** state MySQL's maximum `LONGBLOB` ID
-size, the exact prefix-index comparison/recheck behavior for a full-column
-equality predicate, any InnoDB prefix-index limits, the bytes considered when
-sorting BLOBs in every supported server version and query path, or which rows
-may tie under `ORDER BY id`. Those must be verified
-against the manual before treating MySQL equality or order as equivalent to
-SQLite or choosing a bounded-key/index design. A 256-prefix non-unique key is
-not evidence that IDs may be truncated to 256 bytes.
-
 ## Outcome
 
 The source establishes full application IDs as the durable identity and
 shows no safe truncation rule. SQLite has full-key primary-key uniqueness and
 documented text ordering; MySQL schema source establishes only a non-unique
-256-prefix lookup index plus application-managed check-and-write behavior.
-Because the required MySQL database guarantees could not be verified, this is
-partial research only: leave issue #65 open and do not add a decision to map
-#61 until the official MySQL pages are accessible and checked.
+256-byte prefix lookup index plus application-managed check-and-write behavior.
+Full-column equality is not prefix equality; `UNIQUE` prefix keys introduce
+false conflicts, and prefix indexes do not fully order the complete value.
+The MySQL manual's contradictory sort-length statements and actual optimizer
+selection remain explicit constraints to verify in the eventual design, not
+reasons to change or truncate an application identity.
