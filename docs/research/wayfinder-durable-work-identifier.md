@@ -1,8 +1,9 @@
 # Durable work identifier constraints
 
 **Status: incomplete — MySQL manual could not be retrieved.** This note records
-verified implementation and SQLite evidence, but it does not resolve the MySQL
-prefix-index or BLOB-ordering questions. Keep issue [#65
+verified implementation and SQLite evidence, and additional MySQL 8.4 source
+and test evidence, but it does not establish all MySQL database guarantees.
+Keep issue [#65
 open](https://github.com/reinaldoborges/rff-home/issues/65); do not use this as
 approval to shorten identifiers or change their equality semantics.
 
@@ -108,10 +109,46 @@ and [notification creation](https://github.com/reinaldoborges/rff-go/blob/4ce0e7
   [SQLite notification selection](https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/notification_outbox.go#L207-L210),
   and [SQLite SELECT ordering](https://www.sqlite.org/lang_select.html#orderby).
 
+## MySQL source evidence from the retry
+
+On the follow-up, the Oracle and MySQL documentation sites still returned HTTP
+403. As a different first-party source, the public `mysql/mysql-server` 8.4
+branch was read at commit
+[`14f6f5119f993f74a8514352108d9337182d5be5`](https://github.com/mysql/mysql-server/commit/14f6f5119f993f74a8514352108d9337182d5be5).
+This is an implementation snapshot, not an authoritative manual guarantee
+for every 8.4 release or server supported by the adapter.
+
+- In that snapshot, [`max_sort_length` is described](https://github.com/mysql/mysql-server/blob/14f6f5119f993f74a8514352108d9337182d5be5/sql/sys_vars.cc#L2957-L2963)
+  as the bytes used for long values **with PAD SPACE collations**, with default
+  1024. The sort-key code applies the limit to fixed-length string sort keys
+  and explains why it is needed for PAD SPACE TEXT; `NO_PAD` sort keys are
+  variable-length in that code. See [`sortlength`](https://github.com/mysql/mysql-server/blob/14f6f5119f993f74a8514352108d9337182d5be5/sql/filesort.cc#L2123-L2143)
+  and its [limit branch](https://github.com/mysql/mysql-server/blob/14f6f5119f993f74a8514352108d9337182d5be5/sql/filesort.cc#L2166-L2177).
+  The binary character-set definition has [`NO_PAD`](https://github.com/mysql/mysql-server/blob/14f6f5119f993f74a8514352108d9337182d5be5/strings/ctype-bin.cc#L509-L542).
+- A MySQL regression test creates a BLOB column, sets session
+  `max_sort_length = 20`, inserts distinct strings sharing more than 20 leading
+  bytes, and expects them **still sorted** in `ORDER BY c, id`; the checked-in
+  expected output shows that result. See the [test](https://github.com/mysql/mysql-server/blob/14f6f5119f993f74a8514352108d9337182d5be5/mysql-test/suite/sys_vars/t/max_sort_length_func.test#L184-L209)
+  and [expected output](https://github.com/mysql/mysql-server/blob/14f6f5119f993f74a8514352108d9337182d5be5/mysql-test/suite/sys_vars/r/max_sort_length_func.result#L221-L256).
+  This directly contradicts assuming that all BLOB sorts in MySQL 8.4 simply
+  truncate at `max_sort_length`. It is one test at that revision, not proof of
+  every possible sort path or release.
+- The snapshot's index setup marks a key as usable for sorting only if the key
+  part is full length and the handler supports ordered reads; its full-length
+  condition excludes `BLOB_FLAG`. The optimizer's
+  `test_if_order_by_key` rejects a key when the field is not marked
+  `part_of_sortkey`. See [index setup](https://github.com/mysql/mysql-server/blob/14f6f5119f993f74a8514352108d9337182d5be5/sql/table.cc#L755-L782)
+  and [order-by check](https://github.com/mysql/mysql-server/blob/14f6f5119f993f74a8514352108d9337182d5be5/sql/sql_optimizer.cc#L1804-L1831)
+  with its [rejection](https://github.com/mysql/mysql-server/blob/14f6f5119f993f74a8514352108d9337182d5be5/sql/sql_optimizer.cc#L1914-L1915).
+  This is concrete source evidence that this optimizer path cannot use the
+  BLOB prefix key alone as the full-column sort key; it does not establish the
+  chosen access path for the application's joined queries or a latency result.
+
 ## MySQL documentation gap — blocks a decision
 
-On 2026-11-26, requests to the official MySQL 8.4 manual returned HTTP 403 in
-this environment (both `dev.mysql.com` and the Oracle-hosted manual). I did not
+On 2026-11-26 and the follow-up, requests to the official MySQL 8.4 manual
+returned HTTP 403 in this environment (both `dev.mysql.com` and the
+Oracle-hosted manual). I did not
 work around that restriction. The relevant primary-source pages that still
 need review are:
 
@@ -125,7 +162,8 @@ need review are:
 Accordingly, this research does **not** state MySQL's maximum `LONGBLOB` ID
 size, the exact prefix-index comparison/recheck behavior for a full-column
 equality predicate, any InnoDB prefix-index limits, the bytes considered when
-sorting BLOBs, or which rows may tie under `ORDER BY id`. Those must be verified
+sorting BLOBs in every supported server version and query path, or which rows
+may tie under `ORDER BY id`. Those must be verified
 against the manual before treating MySQL equality or order as equivalent to
 SQLite or choosing a bounded-key/index design. A 256-prefix non-unique key is
 not evidence that IDs may be truncated to 256 bytes.
