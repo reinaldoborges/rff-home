@@ -19,6 +19,9 @@ A deterministic model of application-visible states and permitted event/guard-dr
 **Transition execution**:
 The persisted processing of one accepted request to move an entity from its committed state to a selected target state, including work attempts and notification handoff.
 
+**Integrity finding**:
+A durable report that persisted runtime data is unreadable or inconsistent and needs investigation or correction. Unavailable pinned behavior alone is a compatibility issue, not an integrity finding.
+
 **Continuation**:
 The application-directed advance of a workflow from a committed state without waiting for an external decision.
 
