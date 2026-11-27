@@ -148,9 +148,11 @@ schedule any required scans not managed by the lifecycle, including
 compatibility revalidation and separate-store successor recovery.
 
 Monitor path errors and `Status()`: readiness reflects successful checks and
-running paths, not an empty backlog or available worker capacity. Recoverable
-errors retry; correct stopped paths and call `RestartPath`. Call `Shutdown`
-even if startup reports an error, since independent paths may be running.
+running required paths, not an empty backlog or available worker capacity.
+The optional integrity-sweep path does not affect readiness; monitor its
+progress, health, and overdue status separately. Recoverable errors retry;
+correct stopped paths and call `RestartPath`. Call `Shutdown` even if startup
+reports an error, since independent paths may be running.
 Shutdown stops claims and drains work; a deadline error does not mean an
 external call that ignores cancellation has stopped. Ensure one logical
 lifecycle coordinates a store; global capacity and multi-node coordination are
@@ -163,6 +165,31 @@ atomic with domain state: reconcile missing timers from durable host state.
 Timers are not a recurring or batch scheduler. For configuration and a
 continuous runnable example, see the Go
 [lifecycle guide](https://github.com/reinaldoborges/rff-go/blob/master/README.md#embedded-transition-lifecycle).
+
+## Configure durable storage and integrity maintenance
+
+Execution IDs, including generated IDs, timer IDs, and input IDs must be
+nonempty valid UTF-8 of at most 256 bytes, including with custom adapters.
+Their identity is byte-exact and case-sensitive, without Unicode normalization;
+other identifiers are not subject to this limit.
+
+SQLite and MySQL reject unsupported adapter schemas without migrating or
+rewriting them; plan explicitly for existing data before upgrading. MySQL
+requires strict SQL mode on every pooled connection, which host transaction
+callbacks must preserve. See the [SQLite](https://github.com/reinaldoborges/rff-go/blob/master/README.md#sqlite-acceptance-store)
+and [MySQL](https://github.com/reinaldoborges/rff-go/blob/master/README.md#mysql-acceptance-store)
+adapter guidance.
+
+Ordinary polling validates selected candidates, but corrupt projections can
+hide work. Optional bounded sweeps can run under lifecycle supervision or be
+host-scheduled; neither provides a current global integrity snapshot. For
+findings, use the authorized worker-free maintenance API. It can rebuild
+derived projections from readable records; unreadable authority requires
+trusted restoration, not automatic rewriting. Execution restoration preserves
+the original bytes and does not resolve unknown external effects. For
+quarantine scope, audit, restoration, and input-list limitations, see
+[integrity maintenance](https://github.com/reinaldoborges/rff-go/blob/master/README.md#timer-integrity-maintenance)
+and [pending input selection](https://github.com/reinaldoborges/rff-go/blob/master/README.md#pending-input-selection-integrity).
 
 ## Set a policy for each transition
 

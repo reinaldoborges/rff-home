@@ -20,19 +20,105 @@
 <body class="bg-stone-50 text-slate-900">
 <main class="mx-auto max-w-6xl px-6 py-12 space-y-10">
   <header class="space-y-4">
-    <p class="text-xs font-bold uppercase tracking-widest text-emerald-700">Architecture review · 26 November 2026</p>
+    <p class="text-xs font-bold uppercase tracking-widest text-emerald-700">Architecture review · 26 November 2026 · updated 27 November 2026</p>
     <h1 class="font-serif text-4xl font-semibold">SQLite &amp; MySQL: indexes and durable work</h1>
-    <p class="text-sm text-slate-600">Implementation: <a href="https://github.com/reinaldoborges/rff-go/tree/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7">rff-go at <code>4ce0e74</code></a>, clean isolated checkout of master. Domain and ADRs: rff-home.</p>
+    <p class="text-sm text-slate-600">Current implementation: <a href="https://github.com/reinaldoborges/rff-go/tree/72cc7ec595fa33146d3bd29df4bdcb99bd3abc0d">rff-go at <code>72cc7ec</code></a>, clean master checkout. Historical baseline: <a href="https://github.com/reinaldoborges/rff-go/tree/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7"><code>4ce0e74</code></a>. Domain and ADRs: rff-home.</p>
     <div class="flex flex-wrap gap-4 text-xs text-slate-600">
       <span>□ module</span><span>┄ seam</span><span class="text-red-700">→ leaked selection</span><span>■ deep module</span>
     </div>
     <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-      <strong>Evidence limit:</strong> Disposable query-plan fixtures, not runtime-valid records or latency measurements. No application claims, concurrency checks, or production workload were exercised. An index alone cannot filter fields stored inside serialized records.
+      <strong>Evidence limit:</strong> The historical query plans below used disposable fixtures, not runtime-valid records or latency measurements. They do not describe the current queries. The merged PR reports runtime-valid tests and both adapter gates; this update does not independently rerun them or claim a latency improvement.
     </div>
   </header>
 
+  <section class="rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm space-y-3">
+    <h2 class="font-serif text-2xl font-semibold">Implementation update</h2>
+    <p class="text-sm"><a href="https://github.com/reinaldoborges/rff-go/pull/8">rff-go#8</a> implemented indexed candidate selection, transactional projection validation, and optional integrity maintenance for SQLite and MySQL. The original durable-selection recommendation is implemented, not an open proposal. The PR reports focused regressions, the full container check, a disposable MySQL 8.4 gate, and a lifecycle race regression.</p>
+    <p class="text-sm">Serialized records remain authoritative. Hidden corrupt projections can omit work or disturb ordering; optional sweeps do not guarantee discovery or establish a current global snapshot. Existing unsupported schemas are rejected without automatic migration. The <a href="architecture-review-20261127-092344-durable-selection-decisions.html">intermediate decision review</a> records the pre-implementation handoff.</p>
+  </section>
+
+  <section class="space-y-6" aria-label="Current assessment">
+    <div class="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm space-y-4">
+      <h2 class="font-serif text-2xl font-semibold">Current assessment · <code>72cc7ec</code></h2>
+      <div class="overflow-x-auto">
+        <table class="w-full border-collapse text-left text-sm">
+          <thead><tr class="border-b border-stone-300"><th class="p-2">Original candidate</th><th class="p-2">Current status</th></tr></thead>
+          <tbody>
+            <tr class="border-b border-stone-200"><th class="p-2">Durable work selection</th><td class="p-2">Implemented: SQL selects candidates using projections; the adapters validate candidates and preserve claims and fencing. <a href="https://github.com/reinaldoborges/rff-go/blob/72cc7ec595fa33146d3bd29df4bdcb99bd3abc0d/adapters/sqlite/activity_worker.go#L46-L74">SQLite hook selection</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/72cc7ec595fa33146d3bd29df4bdcb99bd3abc0d/adapters/mysql/activity_worker.go#L45-L73">MySQL hook selection</a>.</td></tr>
+            <tr class="border-b border-stone-200"><th class="p-2">Retained-history validation</th><td class="p-2">Still validates retained executions at open. The local measurements below show increasing total open time; they do not isolate validation cost.</td></tr>
+            <tr><th class="p-2">Index evolution and verification</th><td class="p-2">Largely implemented: both adapters validate required indexes, and selection-plan evidence uses runtime-valid fixtures. <a href="https://github.com/reinaldoborges/rff-go/blob/72cc7ec595fa33146d3bd29df4bdcb99bd3abc0d/adapters/sqlite/durable_index_validation_test.go#L13-L39">SQLite index test</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/72cc7ec595fa33146d3bd29df4bdcb99bd3abc0d/adapters/mysql/durable_schema_validation_test.go#L13-L68">MySQL schema tests</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/72cc7ec595fa33146d3bd29df4bdcb99bd3abc0d/internal/selectionevidence/evidence.go#L84-L154">Plan evidence</a>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-sm">No new selection refactor is recommended from duplication alone: the adapters have different locking requirements and existing corruption, repair, and competing-claim tests. Plan evidence does not establish a general latency or optimizer guarantee.</p>
+    </div>
+
+    <div id="history-measurement" class="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm space-y-4">
+      <h2 class="font-serif text-2xl font-semibold">Retained-history open measurements</h2>
+      <p class="text-sm">At <code>72cc7ec</code>, one disposable store per adapter grew from 0 to 1,000 to 10,000 synthetic terminal Transition executions. Each execution used a distinct entity and request key, a successful Enter hook and commit receipt, and no notification, Continuation, or Downstream operation. Records were created through adapter operations, not inserted as fabricated rows. At 10,000, each store had 10,000 <code>Complete</code> executions and no active reservations.</p>
+      <p class="text-sm">Each cell shows three consecutive complete adapter-open times in milliseconds after seeding and closing the store; connection establishment and initialization are included, fixture creation and container startup are excluded. Caches were not cleared. SQLite and MySQL ran sequentially in isolated containers on a shared Linux host with three available CPUs; Go 1.27.3 and MySQL 8.4.13 were used.</p>
+      <div class="overflow-x-auto">
+        <table class="w-full border-collapse text-left text-sm">
+          <thead><tr class="border-b border-stone-300"><th class="p-2">Retained executions</th><th class="p-2">SQLite open, ms</th><th class="p-2">MySQL open, ms</th></tr></thead>
+          <tbody>
+            <tr class="border-b border-stone-200"><th class="p-2">0</th><td class="p-2">6.940, 6.131, 5.676</td><td class="p-2">253.238, 225.750, 215.025</td></tr>
+            <tr class="border-b border-stone-200"><th class="p-2">1,000</th><td class="p-2">65.550, 61.713, 68.147</td><td class="p-2">277.152, 260.604, 596.692</td></tr>
+            <tr><th class="p-2">10,000</th><td class="p-2">580.377, 644.329, 560.848</td><td class="p-2">781.249, 752.225, 797.648</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><strong>Interpretation:</strong> Total open time grew in this fixture, with a notable MySQL 1,000-record outlier. Three warm-cache observations on a shared host do not establish production latency, a scaling law, or a startup budget. They do not separate validation from connection, schema checks, or other open work; no optimization is established as safe or necessary.</div>
+    </div>
+
+    <article id="current-history" class="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm space-y-5">
+      <div class="flex flex-wrap items-center gap-3">
+        <h2 class="font-serif text-2xl font-semibold">Investigate retained-history validation</h2>
+        <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">Speculative</span>
+        <span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">SQLite / MySQL adapters · real seam</span>
+      </div>
+      <p class="font-mono text-xs leading-6 text-slate-600">adapters/sqlite/schema.go · adapters/mysql/schema_validation.go · adapter schema tests</p>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div class="diagram rounded-xl border border-red-100 bg-stone-50 p-4">
+          <p class="text-xs font-bold uppercase tracking-wider text-red-700">Before · open cost spans validation</p>
+          <pre class="mermaid">
+flowchart TD
+  O[Open adapter] --> V[Validate persisted executions]
+  V --> H[Decode retained history]
+  V --> R[Check reservations]
+  classDef leak fill:#fff1f2,stroke:#e11d48,color:#881337;
+  class H leak
+          </pre>
+        </div>
+        <div class="diagram rounded-xl border border-emerald-100 bg-stone-50 p-4">
+          <p class="text-xs font-bold uppercase tracking-wider text-emerald-700">Explore · attribution before deepening</p>
+          <div class="mt-5 rounded-lg border border-slate-300 bg-white p-3 text-center text-sm">Open adapter</div>
+          <div class="seam my-3"></div>
+          <div class="deep rounded-lg p-5 text-center text-white">
+            <p class="font-semibold">Retained-history validation module</p>
+            <p class="mt-3 text-xs text-slate-300">Attribute open cost · retain fail-closed checks</p>
+            <p class="mt-2 text-xs text-slate-300">Deepen only if evidence identifies a safe opportunity</p>
+          </div>
+        </div>
+      </div>
+      <div class="grid gap-4 text-sm md:grid-cols-2">
+        <p><strong>Problem.</strong> Both adapters decode retained executions when opening a store; total open time increased with history in the measured fixture, but the contribution of validation is unknown.</p>
+        <p><strong>Solution.</strong> If the measured startup cost matters for a real deployment, attribute it before deciding whether validation deserves a deeper module; preserve each adapter's transaction and corruption guarantees.</p>
+      </div>
+      <p class="text-sm"><strong>Locality:</strong> relate validation invariants to attributed startup cost. <strong>Leverage:</strong> a justified deeper module could concentrate those invariants behind the existing adapter seam. <strong>Tests:</strong> retain unreadable-record and inconsistent-reservation rejection without writes and compare representative history sizes.</p>
+      <p class="text-xs text-slate-600"><strong>Deletion test:</strong> removing validation transfers corruption detection to later operations; skipping history would conflict with fail-closed initialization. Retain terminal history under <a href="../adr/0004-host-supplied-transition-persistence.md">ADR 0004</a> and preserve <a href="../adr/0009-persisted-execution-compatibility.md">ADR 0009</a>.</p>
+      <p class="text-xs text-slate-600"><strong>Evidence:</strong> <a href="https://github.com/reinaldoborges/rff-go/blob/72cc7ec595fa33146d3bd29df4bdcb99bd3abc0d/adapters/sqlite/schema.go#L551-L600">SQLite validation</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/72cc7ec595fa33146d3bd29df4bdcb99bd3abc0d/adapters/mysql/schema_validation.go#L63-L120">MySQL validation</a>.</p>
+    </article>
+
+    <div id="top-recommendation" class="deep rounded-2xl p-8 text-white">
+      <p class="text-xs font-bold uppercase tracking-widest text-emerald-300">Top recommendation</p>
+      <h2 class="mt-3 font-serif text-2xl">Assess whether open time matters</h2>
+      <p class="mt-3 text-sm text-slate-200">The measured fixture shows growth, but a refactor needs a real startup budget, cost attribution, and a safe path that preserves the ADRs.</p>
+      <p class="mt-4 text-sm"><a class="text-emerald-300" href="#current-history">Explore the candidate →</a></p>
+    </div>
+  </section>
+
   <section id="plans" class="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm space-y-5">
-    <h2 class="font-serif text-2xl font-semibold">Observed query plans</h2>
+    <h2 class="font-serif text-2xl font-semibold">Historical query plans · <code>4ce0e74</code></h2>
     <p class="text-sm">SQLite 3.46.1 <code>EXPLAIN QUERY PLAN</code> and MySQL 8.4.13 <code>EXPLAIN</code>; exact six-table adapter DDL, matching join keys, and 1,000, 10,000, and 20,000 rows per table. Statistics were refreshed at each size. Each size used none, early, and late <em>surrogate</em> eligibility markers in opaque blobs. Plans were identical across marker positions, because SQL does not inspect them.</p>
     <div class="overflow-x-auto">
       <table class="w-full border-collapse text-left text-sm">
@@ -63,7 +149,8 @@ SELECT id, record FROM rff_inputs ORDER BY id;</code></pre>
     </details>
   </section>
 
-  <section class="space-y-8" aria-label="Deepening candidates">
+  <section class="space-y-8" aria-label="Historical deepening candidates">
+    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><strong>Historical proposals:</strong> The following cards describe the 26 November baseline, not the current implementation. See the current assessment below for remaining opportunities.</div>
     <article id="work-selection" class="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm space-y-5">
       <div class="flex flex-wrap items-center gap-3">
         <h2 class="font-serif text-2xl font-semibold">1. Deepen durable work selection</h2>
@@ -197,13 +284,13 @@ flowchart TD
     </article>
   </section>
 
-  <section id="top-recommendation" class="deep rounded-2xl p-8 text-white">
-    <p class="text-xs font-bold uppercase tracking-widest text-emerald-300">Top recommendation</p>
+  <section id="historical-recommendation" class="deep rounded-2xl p-8 text-white">
+    <p class="text-xs font-bold uppercase tracking-widest text-emerald-300">Historical recommendation · implemented</p>
     <h2 class="mt-3 font-serif text-2xl">Deepen durable work selection first</h2>
     <p class="mt-3 text-sm text-slate-200">Both adapters scan ordered work before eligibility is known; MySQL also chose filesort in these fixtures. Queryable selection metadata and carefully matched indexes address the observed access-path gap, subject to semantics and plan verification.</p>
     <p class="mt-4 text-sm"><a class="text-emerald-300" href="#work-selection">Explore candidate 1 →</a></p>
   </section>
-  <footer class="text-xs text-slate-500">Plans were captured in isolated disposable containers. No user database was accessed and no implementation was changed. Tailwind and Mermaid require CDN access.</footer>
+  <footer class="text-xs text-slate-500">Historical plans were captured in isolated disposable containers. This update did not access a user database or change the implementation. Tailwind and Mermaid require CDN access.</footer>
 </main>
 </body>
 </html>
