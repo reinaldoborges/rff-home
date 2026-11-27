@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Durable work selection after the Wayfinder map · RF-DSF</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "strict" });
+  </script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #fafaf9; color: #0f172a; margin: 0; }
+    main { max-width: 76rem; margin: auto; padding: 2rem 1.5rem; }
+    section, article { margin: 2rem 0; }
+    article, .panel { background: white; border: 1px solid #e7e5e4; border-radius: 1rem; padding: 1.5rem; }
+    .deep { background: linear-gradient(135deg, #0f172a, #334155); color: white; }
+    .seam { border-top: 2px dashed #94a3b8; margin: .8rem 0; }
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: 1rem; }
+    .diagram { border: 1px solid #e7e5e4; border-radius: .75rem; background: #fafaf9; padding: 1rem; min-height: 15rem; }
+    .box { border: 1px solid #cbd5e1; border-radius: .5rem; background: white; padding: .65rem; margin: .5rem 0; text-align: center; }
+    .box.deep { background: #1e293b; color: white; padding: 1.3rem; }
+    .warning { background: #fffbeb; border: 1px solid #fcd34d; border-radius: .75rem; padding: 1rem; }
+    .badge { display: inline-block; border-radius: 9999px; background: #d1fae5; color: #065f46; padding: .2rem .65rem; font-size: .75rem; font-weight: bold; }
+    .badge.amber { background: #fef3c7; color: #92400e; }
+    code { overflow-wrap: anywhere; }
+    a { color: #047857; text-decoration: underline; text-underline-offset: 3px; }
+    th, td { padding: .6rem; border-bottom: 1px solid #e7e5e4; text-align: left; vertical-align: top; }
+    table { border-collapse: collapse; width: 100%; }
+    .label { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="label text-emerald-700">Architecture review · 27 November 2026</p>
+    <h1 class="font-serif text-4xl font-semibold">Durable work selection: from evidence to decisions</h1>
+    <p>Implementation baseline: <a href="https://github.com/reinaldoborges/rff-go/tree/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7">rff-go at <code>4ce0e74</code></a>. The local Go checkout is a different clean revision (<code>881c692</code>); it was not treated as this baseline.</p>
+    <p><a href="architecture-review-20261126-083733-database-indexes.html">Earlier database-index review</a> · <a href="https://github.com/reinaldoborges/rff-home/issues/61">Wayfinder: indexed durable work selection</a> · <a href="../agents/fsm-runtime.md">Runtime guide</a></p>
+    <p class="text-sm">□ module &nbsp; ┄ seam &nbsp; ■ deep module &nbsp; red = friction &nbsp; amber = unresolved decision</p>
+    <div class="warning">
+      <strong>Planning, not implementation.</strong> The prior review's SQLite 3.46.1 / MySQL 8.4.13 plans used opaque surrogate blobs, not decodable runtime records. They do not prove claim behavior, actual rows examined, concurrency, or latency. The map contains decisions for a future change; no new query plan or performance result is claimed here.
+    </div>
+  </header>
+
+  <section class="panel">
+    <h2 class="font-serif text-2xl">What changed since the earlier review</h2>
+    <table>
+      <thead><tr><th>Earlier review</th><th>Map decision / consequence</th></tr></thead>
+      <tbody>
+        <tr><td>Explore eligibility metadata and matching indexes.</td><td>Authoritative serialized records plus transactional workload-specific projections; validate selected candidates, retain claim/fence semantics. <a href="https://github.com/reinaldoborges/rff-home/issues/62">Metadata decision</a> · <a href="https://github.com/reinaldoborges/rff-home/issues/66">Selection semantics</a></td></tr>
+        <tr><td>Establish ID semantics before considering bounded MySQL keys.</td><td>Execution, timer and input IDs must be nonempty valid UTF-8 of at most 256 bytes; preserve accepted bytes, use full-value uniqueness and strict MySQL sessions. <a href="https://github.com/reinaldoborges/rff-home/issues/64#issuecomment-7221239947">Identity clarification</a></td></tr>
+        <tr><td>Explore startup/history validation separately.</td><td>Startup and retained-history scan optimization are outside this map; incompatible schemas still fail closed before writes. <a href="https://github.com/reinaldoborges/rff-home/issues/61">Map scope</a></td></tr>
+        <tr><td>Test real records and candidate plans.</td><td>Both adapters require runtime-valid behavior, deterministic concurrency and schema tests; plan observations are not latency claims or a fixed optimizer contract. <a href="https://github.com/reinaldoborges/rff-home/issues/63">Verification decision</a></td></tr>
+        <tr><td>No specific integrity recovery design.</td><td>Optional bounded sweeps, durable findings, quarantine and authorized maintenance are proposed; none is demonstrated as implemented. <a href="https://github.com/reinaldoborges/rff-home/issues/67">Integrity decision</a> · <a href="https://github.com/reinaldoborges/rff-home/issues/68">Quarantine decision</a> · <a href="https://github.com/reinaldoborges/rff-home/issues/69">Maintenance decision</a></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="warning" id="decision-conflict">
+    <h2 class="font-serif text-2xl">Resolved: completeness versus optional detection</h2>
+    <p>The original <a href="https://github.com/reinaldoborges/rff-home/issues/66">selection semantics</a> required mandatory supervised detection and unconditional pending-input completeness. The later <a href="https://github.com/reinaldoborges/rff-home/issues/67">integrity decision</a> made sweeps optional and disclaimed guaranteed discovery of hidden rows. The user resolved this conflict in the <a href="https://github.com/reinaldoborges/rff-home/issues/66#issuecomment-7220898074">selection clarification</a>: optional detection and the hidden-corruption exception supersede the earlier requirement.</p>
+    <p><strong>Concrete case:</strong> an authoritative pending input belongs to channel A, but its projection says B. SQL filtering for A never selects it, so candidate validation and a lookup of existing findings cannot discover the omission. A completed past sweep is not a current global snapshot, particularly when records change behind its cursor. The same issue can hide eligible claims or disturb first-by-ID selection.</p>
+    <p><strong>Agreed contract:</strong> when projections agree with records, retain complete lists and ordering. Undetected corrupt projections may hide work, change the globally first/earliest selection, or allow an incomplete successful list. Detected mismatches and known potentially matching quarantined inputs still fail visibly. Record/projection updates remain atomic, and exposed candidates remain validated and fenced. Optional sweeps do not certify a current global snapshot or gate ordinary readiness.</p>
+    <p><strong>Resolved — identity clarification:</strong> the <a href="https://github.com/reinaldoborges/rff-home/blob/research/wayfinder-durable-work-identifier-20261126/docs/research/wayfinder-durable-work-identifier.md">identifier research</a> found that timer/input JSON strings do not round-trip invalid UTF-8. The <a href="https://github.com/reinaldoborges/rff-home/issues/64#issuecomment-7221239947">clarified contract</a> explicitly rejects invalid UTF-8 for execution, timer and input IDs, a new restriction for execution IDs; accepted IDs remain byte-exact and case-sensitive, without normalization, including embedded NUL. No migration or automatic deletion is provided; operators may explicitly recreate disposable stores.</p>
+  </section>
+
+  <section aria-label="Deepening candidates">
+    <article id="selection">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="font-serif text-2xl">1. Deepen durable work selection</h2><span class="badge">Strong</span><span class="text-xs">SQLite and MySQL adapters · real seam</span></div>
+      <p><code>adapters/{sqlite,mysql}/{activity_worker.go,timer.go,notification_outbox.go,ingress.go}</code></p>
+      <div class="grid-2">
+        <div class="diagram">
+          <p class="label text-red-700">Before · read and filter</p>
+          <pre class="mermaid">
+flowchart TD
+  W[Worker poll] --> Q[Ordered durable rows]
+  Q --> D[Decode serialized records]
+  D --> F[Evaluate eligibility in Go]
+  F --> C[Claim or return]
+  classDef leak fill:#fff1f2,stroke:#e11d48,color:#881337;
+  class Q,D,F leak
+          </pre>
+        </div>
+        <div class="diagram">
+          <p class="label text-emerald-700">After · concentrated selection</p>
+          <div class="box">Worker or host</div><div class="seam"></div>
+          <div class="box deep"><strong>Durable work selection module</strong><br><small>Workload-specific query · authoritative validation<br>atomic claim · fencing · integrity findings</small></div>
+          <div class="box">SQLite adapter / MySQL adapter</div>
+        </div>
+      </div>
+      <p><strong>Problem.</strong> The pinned queries order and decode rows before evaluating much eligibility; SQLite's observed index scans support ordering, not SQL eligibility.</p>
+      <p><strong>Solution.</strong> Concentrate each workload's queryable projection, transactionally maintained serialized record, selection and candidate validation behind the existing adapter seam; do not make a second active-reservation authority.</p>
+      <p><strong>Locality:</strong> projection changes and claim semantics are reviewed together. <strong>Leverage:</strong> workers retain durable selection without knowing SQL. <strong>Tests:</strong> adapter-valid early/late/empty candidates, deadline equality, ID ties, started hooks, notification diagnostics and concurrent fenced claims.</p>
+      <p><strong>Deletion test:</strong> removing selection would distribute eligibility, lease and claim rules to callers; complexity survives. <strong>Constraint:</strong> global ordering and completeness are conditional on projection consistency; hidden corruption may go undetected.</p>
+      <p><strong>Evidence:</strong> <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/activity_worker.go#L33-L85">Hook claim</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/timer.go#L103-L145">Timer claim</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/ingress.go#L103-L145">Input discovery</a> · <a href="../adr/0007-coordinator-worker-activity-boundary.md">ADR 0007</a>.</p>
+    </article>
+
+    <article id="schema">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="font-serif text-2xl">2. Deepen adapter schema and identity validation</h2><span class="badge">Strong</span><span class="text-xs">SQLite and MySQL adapters · real seam</span></div>
+      <p><code>adapters/{sqlite,mysql}/schema.go</code> · adapter schema tests · shared runtime ID validation</p>
+      <div class="grid-2">
+        <div class="diagram">
+          <p class="label text-red-700">Before · identity differs</p>
+          <div class="box">SQLite: full logical key</div>
+          <div class="box">MySQL: non-unique 256-byte prefix</div>
+          <div class="box">Required index definitions validated separately</div>
+        </div>
+        <div class="diagram">
+          <p class="label text-emerald-700">After · contract concentrated</p>
+          <div class="box">Runtime + direct adapter writes</div><div class="seam"></div>
+          <div class="box deep"><strong>Identity and schema validation module</strong><br><small>256-byte ID check · full-value uniqueness<br>strict MySQL sessions · index/schema validation</small></div>
+        </div>
+      </div>
+      <p><strong>Problem.</strong> Identity, schema, query and index requirements must evolve together across two genuinely different adapters.</p>
+      <p><strong>Solution.</strong> Deepen validation around the selected unchanged-ID contract, workload indexes, and signed seconds/nanoseconds projections; validate every MySQL session's strict mode, not only one pooled connection.</p>
+      <p><strong>Locality:</strong> index intent and compatibility checks stay together. <strong>Leverage:</strong> callers see stable invalid-UTF-8 and oversized-ID failures before writes. <strong>Tests:</strong> 256/257-byte values, multibyte and embedded-NUL IDs, invalid UTF-8 rejection, full-value uniqueness, channel-prefix collisions, timestamp extremes, invalid schemas and non-strict connections.</p>
+      <p><strong>Deletion test:</strong> remove these checks and silent truncation or invalid schema assumptions move to every writer. The 256-byte restriction is new caller-visible behavior, including shared-runtime users of custom adapters. Existing stores are disposable for this effort; no migration or automatic deletion is promised.</p>
+      <p><strong>Evidence:</strong> <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/schema.go#L18-L27">SQLite schema</a> · <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/schema.go#L16-L76">MySQL schema</a> · <a href="https://github.com/reinaldoborges/rff-home/issues/64">Index decision</a> · <a href="../adr/0009-persisted-execution-compatibility.md">ADR 0009</a>.</p>
+    </article>
+
+    <article id="integrity">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="font-serif text-2xl">3. Deepen Integrity finding and quarantine handling</h2><span class="badge amber">Worth exploring</span><span class="text-xs">Both persistence adapters</span></div>
+      <p><code>adapters/{sqlite,mysql}/schema.go</code> · selection and direct mutation paths · proposed finding storage</p>
+      <div class="grid-2">
+        <div class="diagram">
+          <p class="label text-red-700">Before · corruption meets each path</p>
+          <div class="box">Hook / timer / notification / input</div>
+          <div class="box">Decode and independently detect errors</div>
+          <div class="box">No map-designed finding/quarantine implementation established</div>
+        </div>
+        <div class="diagram">
+          <p class="label text-emerald-700">After · known findings constrain work</p>
+          <div class="box">Claim / mutate / report</div><div class="seam"></div>
+          <div class="box deep"><strong>Integrity finding module</strong><br><small>Stable protected locator · trusted dependencies<br>transactional quarantine check · safe audit</small></div>
+          <div class="box">Independent validated work may proceed</div>
+        </div>
+      </div>
+      <p><strong>Problem.</strong> A finding on shared execution or reservation data affects multiple operations; a stale observation or unavailable finding lookup cannot safely be treated as no finding.</p>
+      <p><strong>Solution.</strong> Concentrate durable findings, non-reused locators and dependency-aware quarantine checks with the existing claim and mutation transaction; use optional checkpointed sweeps only as described by the integrity decision.</p>
+      <p><strong>Locality:</strong> quarantine propagation and fences are reviewed together. <strong>Leverage:</strong> unaffected work can proceed after its own validation. <strong>Tests:</strong> stale revisions, unknown edges, unavailable lookup, unknown input channel, in-flight reports and independent work.</p>
+      <p><strong>Deletion test:</strong> removing a shared finding module pushes quarantine checks into every dependent path. <strong>Limitation:</strong> quarantine applies to known findings; optional checks do not guarantee discovery of rows hidden by a corrupt projection.</p>
+      <p><strong>Evidence:</strong> <a href="https://github.com/reinaldoborges/rff-home/issues/67">Integrity supervision decision</a> · <a href="https://github.com/reinaldoborges/rff-home/issues/68">Quarantine dependency decision</a> · <a href="../adr/0004-host-supplied-transition-persistence.md">ADR 0004</a> · <a href="../adr/0007-coordinator-worker-activity-boundary.md">ADR 0007</a>.</p>
+    </article>
+
+    <article id="maintenance">
+      <div class="flex flex-wrap items-center gap-3"><h2 class="font-serif text-2xl">4. Deepen authorized integrity maintenance</h2><span class="badge amber">Worth exploring</span><span class="text-xs">Host authorization + persistence adapters</span></div>
+      <p><code>adapters/{sqlite,mysql}/schema.go</code> · proposed maintenance and audit implementation · host-owned restoration</p>
+      <div class="grid-2">
+        <div class="diagram">
+          <p class="label text-red-700">Before · initialization fails closed</p>
+          <div class="box">Open existing adapter</div>
+          <div class="box">Unreadable record / incompatible schema</div>
+          <div class="box">No map-designed repair path established</div>
+        </div>
+        <div class="diagram">
+          <p class="label text-emerald-700">After · distinct maintenance seam</p>
+          <div class="box">Authorized host operator</div><div class="seam"></div>
+          <div class="box deep"><strong>Integrity maintenance module</strong><br><small>Schema + revision + fence checks<br>derived repair and atomic audit<br>trusted restoration and revalidation</small></div>
+        </div>
+      </div>
+      <p><strong>Problem.</strong> Normal fail-closed initialization can prevent workers from starting, yet a projection repair cannot safely fabricate authoritative transition history.</p>
+      <p><strong>Solution.</strong> Separate worker-free authorized inspection and repair from normal initialization, retaining schema, transaction, audit, revision and fence checks; host-controlled trusted restoration handles unreadable authority.</p>
+      <p><strong>Locality:</strong> repair and audit occur together. <strong>Leverage:</strong> one guarded maintenance path can serve both offline recovery and coexistence with unrelated work. <strong>Tests:</strong> unavailable audit/finding storage, changed revision, missing record, restore/recheck, and no partial repair on conflict.</p>
+      <p><strong>Deletion test:</strong> without guarded maintenance, recovery either remains unavailable or moves into ad hoc writes. <strong>Worst case:</strong> a started hook may already have caused an external effect when its transition execution becomes unreadable. Do not automatically retry, abort or delete; preserve evidence, quarantine the trusted scope, seek host-controlled restoration, and keep it quarantined if the outcome cannot be established.</p>
+      <p><strong>Evidence:</strong> <a href="https://github.com/reinaldoborges/rff-home/issues/69">Maintenance decision</a> · <a href="https://github.com/reinaldoborges/rff-home/issues/69#issuecomment-7220663400">Worst-case recovery scenario</a> · <a href="../adr/0009-persisted-execution-compatibility.md">ADR 0009</a> · <a href="../adr/0013-track-downstream-operations-within-transitions.md">ADR 0013</a>.</p>
+    </article>
+  </section>
+
+  <section class="panel" id="verification">
+    <h2 class="font-serif text-2xl">Handoff evidence, not measured performance</h2>
+    <p>Exercise runtime-valid records on both adapters; deterministically coordinate competing claims and stale reports; verify projection/record agreement, corruption handling and fail-closed initialization. Capture versions, schema fingerprints, fixture descriptions, commands and representative plans. Test required predicates and index definitions without demanding one optimizer plan; filesort can be valid. A latency benchmark is not a required gate.</p>
+    <p>The map's verification decision is an acceptance specification for future implementation. The earlier surrogate plans are not that evidence. Test consistent projections, known corruption, and the accepted hidden-corruption exception separately.</p>
+    <p><a href="https://github.com/reinaldoborges/rff-home/issues/63">Define work selection verification and handoff</a> · <a href="architecture-review-20261126-083733-database-indexes.html#plans">Earlier observed plans and fixture limits</a></p>
+  </section>
+
+  <section class="deep rounded-2xl p-8" id="top-recommendation">
+    <p class="label text-emerald-300">Top recommendation</p>
+    <h2 class="font-serif text-2xl">Deepen durable work selection</h2>
+    <p>Selection and projection consistency provide the most direct leverage against the observed scans; its interface must communicate the agreed hidden-corruption exception.</p>
+    <p><a class="text-emerald-300" href="#decision-conflict">Review the clarified contract</a> · <a class="text-emerald-300" href="#selection">Review candidate 1</a></p>
+  </section>
+  <footer class="text-xs text-slate-500">The earlier review remains unchanged. Tailwind and Mermaid are loaded from CDNs; the HTML retains readable content without them.</footer>
+</main>
+</body>
+</html>

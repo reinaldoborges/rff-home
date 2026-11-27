@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Database index architecture review · RF-DSF</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "strict" });
+  </script>
+  <style>
+    .deep { background: linear-gradient(135deg, #0f172a, #334155); }
+    .seam { border-top: 2px dashed #94a3b8; }
+    .diagram { min-height: 235px; }
+    code { overflow-wrap: anywhere; }
+    a { text-decoration: underline; text-underline-offset: 3px; }
+  </style>
+</head>
+<body class="bg-stone-50 text-slate-900">
+<main class="mx-auto max-w-6xl px-6 py-12 space-y-10">
+  <header class="space-y-4">
+    <p class="text-xs font-bold uppercase tracking-widest text-emerald-700">Architecture review · 26 November 2026</p>
+    <h1 class="font-serif text-4xl font-semibold">SQLite &amp; MySQL: indexes and durable work</h1>
+    <p class="text-sm text-slate-600">Implementation: <a href="https://github.com/reinaldoborges/rff-go/tree/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7">rff-go at <code>4ce0e74</code></a>, clean isolated checkout of master. Domain and ADRs: rff-home.</p>
+    <div class="flex flex-wrap gap-4 text-xs text-slate-600">
+      <span>□ module</span><span>┄ seam</span><span class="text-red-700">→ leaked selection</span><span>■ deep module</span>
+    </div>
+    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+      <strong>Evidence limit:</strong> Disposable query-plan fixtures, not runtime-valid records or latency measurements. No application claims, concurrency checks, or production workload were exercised. An index alone cannot filter fields stored inside serialized records.
+    </div>
+  </header>
+
+  <section id="plans" class="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm space-y-5">
+    <h2 class="font-serif text-2xl font-semibold">Observed query plans</h2>
+    <p class="text-sm">SQLite 3.46.1 <code>EXPLAIN QUERY PLAN</code> and MySQL 8.4.13 <code>EXPLAIN</code>; exact six-table adapter DDL, matching join keys, and 1,000, 10,000, and 20,000 rows per table. Statistics were refreshed at each size. Each size used none, early, and late <em>surrogate</em> eligibility markers in opaque blobs. Plans were identical across marker positions, because SQL does not inspect them.</p>
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse text-left text-sm">
+        <thead><tr class="border-b border-stone-300"><th class="p-2">Workload</th><th class="p-2">SQLite</th><th class="p-2">MySQL</th></tr></thead>
+        <tbody>
+          <tr class="border-b border-stone-200"><th class="p-2">Hook claim</th><td class="p-2">Ordered hook-work index scan; indexed active and execution lookups.</td><td class="p-2">Full scan, temporary table and filesort; indexed lookups for the other joins.</td></tr>
+          <tr class="border-b border-stone-200"><th class="p-2">Timer claim</th><td class="p-2">Ordered timer ID index scan.</td><td class="p-2">Full scan and filesort.</td></tr>
+          <tr class="border-b border-stone-200"><th class="p-2">Notification claim</th><td class="p-2">Ordered notification-work index scan; indexed execution lookup.</td><td class="p-2">Full work scan and filesort; indexed execution lookup.</td></tr>
+          <tr><th class="p-2">Pending-input listing</th><td class="p-2">Ordered input ID index scan.</td><td class="p-2">Full scan and filesort.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-sm">MySQL's hook plan scanned <code>rff_active</code> at 1,000 rows and <code>rff_executions</code> at 10,000 and 20,000; estimated row counts and join order are optimizer choices, not actual rows examined. SQLite's scans use indexes for ordering, not eligibility. A timer claim selects the earliest eligible deadline in Go; input listing filters channel and outcome in Go.</p>
+    <div class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><strong>Fixture limitation:</strong> The blobs contain marker JSON, not adapter-decodable records; no actual early/late/empty claim or lease scenario was executed. These plans establish the SQL access paths for this synthetic data, not application eligibility, latency, or production performance.</div>
+    <details class="text-sm">
+      <summary class="cursor-pointer font-semibold">Queries inspected</summary>
+      <pre class="mt-3 overflow-x-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100"><code>-- Hook claim
+SELECT w.execution_id, w.work, e.record FROM rff_hook_work AS w
+JOIN rff_active AS a ON a.execution_id = w.execution_id
+JOIN rff_executions AS e ON e.id = w.execution_id ORDER BY w.execution_id;
+-- Timer claim
+SELECT id, record FROM rff_timers ORDER BY id;
+-- Notification claim
+SELECT w.execution_id, w.work, e.record FROM rff_notification_work AS w
+JOIN rff_executions AS e ON e.id = w.execution_id ORDER BY w.execution_id;
+-- Pending-input listing
+SELECT id, record FROM rff_inputs ORDER BY id;</code></pre>
+    </details>
+  </section>
+
+  <section class="space-y-8" aria-label="Deepening candidates">
+    <article id="work-selection" class="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm space-y-5">
+      <div class="flex flex-wrap items-center gap-3">
+        <h2 class="font-serif text-2xl font-semibold">1. Deepen durable work selection</h2>
+        <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">Strong</span>
+        <span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">SQLite / MySQL adapters</span>
+      </div>
+      <p class="font-mono text-xs leading-6 text-slate-600">adapters/{sqlite,mysql}/{activity_worker.go,timer.go,notification_outbox.go,ingress.go}</p>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div class="diagram rounded-xl border border-red-100 bg-stone-50 p-4">
+          <p class="text-xs font-bold uppercase tracking-wider text-red-700">Before · selection leaks</p>
+          <pre class="mermaid">
+flowchart TD
+  P[Worker poll] --> Q[Ordered work rows]
+  Q --> D[Decode records]
+  D --> F[Filter due, completed, lease]
+  F --> C[Claim eligible work]
+  classDef leak fill:#fff1f2,stroke:#e11d48,color:#881337;
+  class Q,D,F leak
+          </pre>
+        </div>
+        <div class="diagram rounded-xl border border-emerald-100 bg-stone-50 p-4">
+          <p class="text-xs font-bold uppercase tracking-wider text-emerald-700">After · selection concentrated</p>
+          <div class="mt-5 rounded-lg border border-slate-300 bg-white p-3 text-center text-sm">Worker poll</div>
+          <div class="seam my-3"></div>
+          <div class="deep rounded-lg p-5 text-center text-white">
+            <p class="font-semibold">Durable work selection module</p>
+            <p class="mt-3 text-xs text-slate-300">Queryable eligibility · claim · fencing</p>
+            <p class="mt-2 text-xs text-slate-300">Adapter-specific indexing stays inside</p>
+          </div>
+        </div>
+      </div>
+      <div class="grid gap-4 text-sm md:grid-cols-2">
+        <p><strong>Problem.</strong> Ordered polling reads and decodes work before eligibility is checked in Go; due and status fields are not SQL predicates. A larger retained work set can increase candidate inspection.</p>
+        <p><strong>Solution.</strong> Explore queryable eligibility metadata and matching adapter indexes inside the durable work module; change the selection queries as well, since extra indexes cannot filter opaque blobs.</p>
+      </div>
+      <p class="text-sm"><strong>Index directions:</strong> evaluate timer completion and deadline with an ID tie-breaker; input channel and completion with ID ordering; and hook/notification eligibility and availability alongside claim ordering. Range predicates, lease expiry, and ordering can prevent one index from satisfying every condition; verify each rewritten query on both adapters rather than assuming a composite index will do so.</p>
+      <p class="text-sm"><strong>Locality:</strong> eligibility and indexing change together. <strong>Leverage:</strong> workers rely on durable selection rather than record traversal. <strong>Tests:</strong> use adapter-valid due, future, completed, leased, and stale-fence records; verify concurrent claims, identical selection semantics, and candidate query plans.</p>
+      <p class="text-xs text-slate-600"><strong>Deletion test:</strong> Removing the selection module would spread eligibility, lease, and claim rules into workers; the complexity does not disappear. Preserve atomic claims, fencing, at-least-once delivery, and serialized-record validation.</p>
+      <p class="text-xs text-slate-600"><strong>Evidence:</strong>
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/activity_worker.go#L33-L85">Hook claim</a> ·
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/timer.go#L103-L145">Timer claim</a> ·
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/notification_outbox.go#L207-L250">MySQL notification claim</a> ·
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/ingress.go#L103-L145">Input discovery</a>.
+      </p>
+    </article>
+
+    <article id="startup" class="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm space-y-5">
+      <div class="flex flex-wrap items-center gap-3">
+        <h2 class="font-serif text-2xl font-semibold">2. Deepen retained-history validation</h2>
+        <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">Worth exploring</span>
+        <span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">SQLite / MySQL adapters</span>
+      </div>
+      <p class="font-mono text-xs leading-6 text-slate-600">adapters/sqlite/schema.go · adapters/mysql/{schema.go,schema_validation.go} · adapter record validators</p>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div class="diagram rounded-xl border border-stone-200 bg-stone-50 p-4">
+          <p class="text-xs font-bold uppercase tracking-wider text-red-700">Before · open reads retained history</p>
+          <div class="mt-5 rounded-lg border border-slate-300 bg-white p-3 text-center text-sm">Open adapter</div>
+          <div class="py-2 text-center text-red-700">↓ unbounded validation reads</div>
+          <div class="grid grid-cols-3 gap-2 text-center text-xs">
+            <div class="rounded border border-red-200 bg-red-50 p-3">Executions<br>including terminal</div>
+            <div class="rounded border border-red-200 bg-red-50 p-3">Work and<br>leases</div>
+            <div class="rounded border border-red-200 bg-red-50 p-3">Timers, inputs,<br>operations</div>
+          </div>
+        </div>
+        <div class="diagram rounded-xl border border-emerald-100 bg-stone-50 p-4">
+          <p class="text-xs font-bold uppercase tracking-wider text-emerald-700">After · validation responsibility localized</p>
+          <div class="mt-5 rounded-lg border border-slate-300 bg-white p-3 text-center text-sm">Open adapter</div>
+          <div class="seam my-3"></div>
+          <div class="deep rounded-lg p-5 text-center text-white">
+            <p class="font-semibold">Persisted-record validation module</p>
+            <p class="mt-3 text-xs text-slate-300">Safety invariants · measured history cost</p>
+            <p class="mt-2 text-xs text-slate-300">Any optimization proved against corruption</p>
+          </div>
+        </div>
+      </div>
+      <div class="grid gap-4 text-sm md:grid-cols-2">
+        <p><strong>Problem.</strong> Opening an existing schema validates every execution and several other tables without a row limit; retained terminal history increases the work to inspect, even if an index accelerates joins.</p>
+        <p><strong>Solution.</strong> Explore concentrating validation and its performance evidence without weakening fail-closed initialization; startup cost was not measured in this review.</p>
+      </div>
+      <p class="text-sm"><strong>Locality:</strong> validation invariants and cost are reviewed together. <strong>Leverage:</strong> both adapters gain a common evidence standard. <strong>Tests:</strong> measure increasing history sizes; inject unreadable records and inconsistent joins and verify initialization fails without writes.</p>
+      <p class="text-xs text-slate-600"><strong>Deletion test:</strong> Removing validation would not remove the need to detect corrupt persisted executions; that risk would move to later runtime operations. Do not delete history or skip validation as a shortcut: ADRs 0004 and 0009 retain history and require unreadable transition-record schemas to fail initialization.</p>
+      <p class="text-xs text-slate-600"><strong>Evidence:</strong>
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/schema.go#L302-L307">SQLite open validation</a> ·
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/schema.go#L363-L407">Every execution decoded</a> ·
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/schema.go#L178-L194">MySQL validation</a> ·
+        <a href="../adr/0004-host-supplied-transition-persistence.md">ADR 0004</a> · <a href="../adr/0009-persisted-execution-compatibility.md">ADR 0009</a>.
+      </p>
+    </article>
+
+    <article id="index-evolution" class="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm space-y-5">
+      <div class="flex flex-wrap items-center gap-3">
+        <h2 class="font-serif text-2xl font-semibold">3. Deepen index evolution and verification</h2>
+        <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">Worth exploring</span>
+        <span class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">SQLite / MySQL adapters</span>
+      </div>
+      <p class="font-mono text-xs leading-6 text-slate-600">adapters/{sqlite,mysql}/schema.go · adapters/sqlite/schema_test.go · adapters/mysql/mysql_test.go</p>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div class="diagram rounded-xl border border-stone-200 bg-stone-50 p-4">
+          <p class="text-xs font-bold uppercase tracking-wider text-red-700">Before · index knowledge dispersed</p>
+          <div class="mt-5 grid gap-2 text-center text-sm">
+            <div class="rounded border border-slate-300 bg-white p-2">DDL and identity rules</div>
+            <div class="rounded border border-slate-300 bg-white p-2">Schema version and validation</div>
+            <div class="rounded border border-slate-300 bg-white p-2">Query patterns and plans</div>
+            <div class="rounded border border-slate-300 bg-white p-2">Existing-store compatibility tests</div>
+          </div>
+        </div>
+        <div class="diagram rounded-xl border border-emerald-100 bg-stone-50 p-4">
+          <p class="text-xs font-bold uppercase tracking-wider text-emerald-700">After · evidence follows the index</p>
+          <div class="mt-5 rounded-lg border border-slate-300 bg-white p-3 text-center text-sm">Schema evolution</div>
+          <div class="seam my-3"></div>
+          <div class="deep rounded-lg p-5 text-center text-white">
+            <p class="font-semibold">Index compatibility module</p>
+            <p class="mt-3 text-xs text-slate-300">DDL · validation · existing stores</p>
+            <p class="mt-2 text-xs text-slate-300">Plan and write-cost evidence per adapter</p>
+          </div>
+        </div>
+      </div>
+      <div class="grid gap-4 text-sm md:grid-cols-2">
+        <p><strong>Problem.</strong> An index change affects schema creation, compatibility checks, existing stores, and query behavior. MySQL validates required index definitions but does not repair or migrate an existing schema on open.</p>
+        <p><strong>Solution.</strong> Treat index changes as adapter schema evolution with shared verification of fresh stores and representative query plans. The selected scope assumes disposable existing data, so migration is not required.</p>
+      </div>
+      <p class="text-sm"><strong>Locality:</strong> index intent and compatibility evidence stay together. <strong>Leverage:</strong> one review path covers both adapters. <strong>Tests:</strong> reject missing or malformed required indexes without writes; test long shared-prefix identifiers and candidate plans on both adapters.</p>
+      <p class="text-xs text-slate-600"><strong>Deletion test:</strong> Removing the compatibility checks would push index correctness into operational diagnosis. SQLite full-key uniqueness and MySQL non-unique 256-byte BLOB prefix indexes differ: exact identity checks and serialization must remain correct. In an isolated 20,000-row MySQL experiment, converting timer and input IDs to bounded <code>VARBINARY(256)</code> still produced filesort by default; forcing the full index produced ordered index scans. This does not justify forcing an index or truncating IDs: supported ID lengths and semantics must be established first.</p>
+      <p class="text-xs text-slate-600"><strong>Evidence:</strong>
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/sqlite/schema.go#L18-L27">SQLite indexes</a> ·
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/schema.go#L16-L76">MySQL indexes</a> ·
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/schema.go#L129-L194">MySQL open and version checks</a> ·
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/schema.go#L282">Index validation</a> ·
+        <a href="https://github.com/reinaldoborges/rff-go/blob/4ce0e74b4a6e78f955cd5fef858402f0d7a868c7/adapters/mysql/mysql_test.go#L209">Missing-index test</a>.
+      </p>
+    </article>
+  </section>
+
+  <section id="top-recommendation" class="deep rounded-2xl p-8 text-white">
+    <p class="text-xs font-bold uppercase tracking-widest text-emerald-300">Top recommendation</p>
+    <h2 class="mt-3 font-serif text-2xl">Deepen durable work selection first</h2>
+    <p class="mt-3 text-sm text-slate-200">Both adapters scan ordered work before eligibility is known; MySQL also chose filesort in these fixtures. Queryable selection metadata and carefully matched indexes address the observed access-path gap, subject to semantics and plan verification.</p>
+    <p class="mt-4 text-sm"><a class="text-emerald-300" href="#work-selection">Explore candidate 1 →</a></p>
+  </section>
+  <footer class="text-xs text-slate-500">Plans were captured in isolated disposable containers. No user database was accessed and no implementation was changed. Tailwind and Mermaid require CDN access.</footer>
+</main>
+</body>
+</html>
